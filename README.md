@@ -1,4 +1,5 @@
 
+![头像](https://github.com/zhuyufeng0809/Picture/blob/master/HeadSculpture.jpeg)
 
 | 操作系统 | 计算机网络 | Java | Shell | Sql | Oracle | 数据仓库 |
 | :-: | :-: | :-: | :-: | :-: | :-: | :-: | 
