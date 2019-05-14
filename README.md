@@ -5,13 +5,13 @@
 
 技术栈：  
 
-* 操作系统
-* 计算机网络
-* Java
-* Shell
-* SQL
-* Oracle
-* 数据仓库
+- 操作系统
+- 计算机网络
+- Java
+- Shell
+- SQL
+- Oracle
+- 数据仓库
 
 ### 
 
