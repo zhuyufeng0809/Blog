@@ -1,6 +1,6 @@
 <p align="center">
 <a target="_blank">
-	<img src="https://github.com/zhuyufeng0809/Picture/blob/master/HeadSculpture.jpeg?raw=true?center" width=""/>
+	<img src="https://github.com/zhuyufeng0809/Picture/blob/master/HeadSculpture.jpeg?raw=true" width=""/>
 </a>
 </p>
 
