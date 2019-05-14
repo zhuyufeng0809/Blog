@@ -1,15 +1,20 @@
-<p align="center">
-<a target="_blank">
-	<img src="https://github.com/zhuyufeng0809/Picture/blob/master/HeadSculpture.jpeg?raw=true> 段落引用" width=""/>
-</a>
-</p>
+🤨🤨Welcome to my blog
+----
 
-<br align="center">
+<img src="https://github.com/zhuyufeng0809/Picture/blob/master/HeadSculpture.jpeg?raw=true" width="20%" align="right"/>
 
-| 操作系统 | 计算机网络 | Java | Shell | Sql | Oracle | 数据仓库 |
-|:---:|:---:|:---:|:---:|:---:|:---:|:---:| 
-| 💻 | ☁️ | ☕️ | 🍔 | 🔦 | 💾 | 🎨 |
+技术栈：  
 
-<br>
+* 操作系统
+* 计算机网络
+* Java
+* Shell
+* SQL
+* Oracle
+* 数据仓库
 
-<h2 align="center">欢迎来到我的博客🤨🤨</h2>
+### 
+
+
+
+
