@@ -1,7 +1,7 @@
 🤨🤨Welcome to my blog
 ----
 
-<img src="https://github.com/zhuyufeng0809/Picture/blob/master/HeadSculpture.jpeg?raw=true" width="18%" align="right"/>
+<img src="https://github.com/zhuyufeng0809/Picture/blob/master/HeadSculpture.jpeg?raw=true" width="16%" align="right"/>
 
 👨‍💻‍一只努力学习的非典型性程序猿👨‍💻‍
 
