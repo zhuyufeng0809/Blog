@@ -3,7 +3,7 @@
 
 <img src="https://github.com/zhuyufeng0809/Picture/blob/master/HeadSculpture.jpeg?raw=true" width="16%" align="right"/>
 
-👨‍💻‍一只努力学习的非典型性程序猿👨‍💻‍
+👨‍💻‍一只努力学习的非典型性沙雕程序猿👨‍💻‍
 
 把日常的学习✏️和感想🧠都藏在这里  
 
@@ -14,7 +14,7 @@
 ----
 
 * 💻操作系统
-* ☁️计算机网络
+* ☁️[计算机网络](计算机网络/计算机网络.md)
 * ☕️Java
 * 🍔Shell
 * 🔦SQL
