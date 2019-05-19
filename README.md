@@ -5,6 +5,7 @@
     <img src="图床/HeadSculpture.jpeg" width="30%" align="center"/>
  </div>
  <br>
+ <p align="center">居左文本</p> 
 
  <center>👨‍💻‍一只努力学习的非典型性沙雕程序猿👨‍💻‍</center>
  <center>把日常的学习✏️和感想🧠都藏在这里</center>
