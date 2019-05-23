@@ -2,7 +2,7 @@
 ----
 
  <div align=center>
-    <img src="图床/HeadSculpture.jpeg" width="30%" align="center"/>
+    <img src="http://ww4.sinaimg.cn/large/006tNc79gy1g3b6ycyxvbj306y06yq2v.jpg" width="30%" align="center"/>
  </div>
  <br>
  
