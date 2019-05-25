@@ -3,7 +3,7 @@
 ## 概述：
 
  <div align=center>
-    <img srpc="http://ww4.sinaimg.cn/large/006tNc79ly1g3b9dsz86tj30ez04w0sm.jpg" width="50%"/>
+    <img src="http://ww4.sinaimg.cn/large/006tNc79ly1g3b9dsz86tj30ez04w0sm.jpg" width="50%"/>
     <br>
  </div>
 
