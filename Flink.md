@@ -187,3 +187,144 @@ hello dataStream:2> (streaming,4)
 hello dataStream:1> (com,4)
 ```
 
+#### Source
+
+##### 文件
+
+```java
+	public <OUT> DataStreamSource<OUT> readFile(FileInputFormat<OUT> inputFormat,
+												String filePath,
+												FileProcessingMode watchType,
+												long interval,
+												TypeInformation<OUT> typeInformation)
+```
+
+该方法是readFile方法的通用方法，其他readFile的重载方法内部都调用了该方法。该方法提供了最丰富的的语义去满足开发者的各种需求
+
+参数解释：
+
+* FileProcessingMode（监视策略模式）：目前有两种枚举值。PROCESS_ONCE扫描一次路径就退出监视；PROCESS_CONTINUOUSLY会监视路径并对新数据作出反应，当文件被修改时，其内容将被完全**重新处理**
+* TypeInformation：将读取到的数据转换为指定类型。默认值为该抽象类类型的实现类BasicTypeInfo的STRING_TYPE_INFO
+* FileInputFormat：读取文件的格式。内置了几种该抽象类类型的实现类
+
+```java
+public class Source {
+
+    static final String filePath = "/Users/zhuyufeng/IdeaProjects/LearnFlink/src/main/resources/TextFileSource.txt";
+
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        TextInputFormat textInputFormat = new TextInputFormat(new Path(filePath));
+
+        DataStream<String> dataStream = env.readFile(textInputFormat,
+                filePath,
+                FileProcessingMode.PROCESS_CONTINUOUSLY,
+                3000,
+                BasicTypeInfo.STRING_TYPE_INFO
+                );
+
+        dataStream.print();
+
+        env.execute("fileSource DataStream");
+    }
+}
+```
+
+##### socket
+
+```java
+public DataStreamSource<String> socketTextStream(String hostname, int port, String delimiter, long maxRetry)
+```
+
+该方法是socketTextStream方法的通用方法，其他socketTextStream的重载方法内部都调用了该方法。该方法提供了最丰富的的语义去满足开发者的各种需求
+
+参数解释：
+
+* hostname：主机名
+* port：端口
+* delimiter：分隔符
+* maxRetry：等待socket暂时关闭的最大重试间隔（以秒为单位）。0为立即终止，负值为永久重试
+
+##### 集合
+
+基于Java常规集合创建数据源仅为了方便本地测试，实际生产环境不会使用该方式
+
+```java
+public <OUT> DataStreamSource<OUT> fromCollection(Collection<OUT> data)
+//基于java.util.Collection创建数据流
+public final <OUT> DataStreamSource<OUT> fromElements(OUT... data)
+//基于给定对象序列创建数据流
+public DataStreamSource<Long> generateSequence(long from, long to)
+//基于给定区间生成序列创建数据流
+```
+
+##### 自定义
+
+调用StreamExecutionEnvironment的addSource方法可以添加新的数据源，Flink提供了一批实现好的连接器以支持对应的数据源，同时开发者也可以实现自定义的数据源函数去读取指定系统的数据
+
+#### Sink
+
+##### 文件
+
+```java
+	public <X extends Tuple> DataStreamSink<T> writeAsCsv(
+			String path,
+			WriteMode writeMode,
+			String rowDelimiter,
+			String fieldDelimiter)
+	
+	public DataStreamSink<T> writeAsText(String path, WriteMode writeMode)
+```
+
+参数解释：
+
+* WriteMode：目前有两种枚举值。NO_OVERWRITE仅在文件不存在时创建指定文件，不覆盖现有文件和目录。如果指定路径文件存在，会报错；OVERWRITE无论指定路径上是否存在文件或者目录，都将创建新的目标文件，现有文件或者目录在创建之前会自动删除
+* rowDelimiter：指定行分隔符
+* fieldDelimiter：指定字段分隔符
+
+Flink内置了几种输出到文件的格式，都继承自FileOutputFormat类，writeAsCsv和writeAsText方法是对CsvOutputFormat和TextOutputFormat类的封装
+
+##### 标准输出流
+
+```java
+public DataStreamSink<T> print()
+public DataStreamSink<T> print(String sinkIdentifier)
+
+public DataStreamSink<T> printToErr()
+public DataStreamSink<T> printToErr(String sinkIdentifier)
+```
+
+```java
+public class Sink {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        //env.setParallelism(1);
+
+        DataStream<Integer> dataStream = env.fromElements(1,2,3);
+
+        dataStream.print("mark");
+
+        env.execute("stdOut DataStream");
+    }
+}
+```
+
+```java
+mark:4> 3
+mark:2> 1
+mark:3> 2
+```
+
+如果sink任务的并行度大于1，则输出时指定的固定前缀还会与生成输出的任务的标识符一起作为前缀
+
+##### socket
+
+```java
+public DataStreamSink<T> writeToSocket(String hostName, int port, SerializationSchema<T> schema)
+```
+
+##### 自定义
+
+调用StreamExecutionEnvironment的addSink方法可以添加新的sink
+
