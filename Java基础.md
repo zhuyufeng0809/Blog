@@ -306,7 +306,7 @@ public class LambdaTest {
 }
 ```
 
-##### lambdas实现Runnable接口
+##### lambda实现Runnable接口
 
 ```
 new Thread(() -> System.out.println("Hello world !")).start();  
