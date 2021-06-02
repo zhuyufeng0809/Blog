@@ -328,3 +328,87 @@ public DataStreamSink<T> writeToSocket(String hostName, int port, SerializationS
 
 调用StreamExecutionEnvironment的addSink方法可以添加新的sink
 
+#### 算子
+
+##### Map
+
+场景：一对一映射
+
+```java
+public class Operator {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        DataStream<Long> streamSource = env.generateSequence(1, 5);
+
+        DataStream<Tuple2<Long, Integer>> mapStream = streamSource
+                .map(values -> new Tuple2<>(values * 100, values.hashCode()))
+                .returns(Types.TUPLE(Types.LONG, Types.INT));
+        mapStream.print("输出结果");
+        env.execute("MapTemplate");
+    }
+}
+```
+
+##### FlatMap
+
+场景：一对n映射。n可能为0、1或多个元素。典型的应用场景是拆分不需要的列表或数组
+
+```java
+public class Operator {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        DataStream<Tuple2<String, Integer>> streamSource = env.fromElements(
+                new Tuple2<>("liu yang", 1),
+                new Tuple2<>("my blog is intsmaze", 2),
+                new Tuple2<>("hello flink", 2));
+        
+        DataStream<Tuple1<String>> resultStream = streamSource
+                .flatMap((FlatMapFunction<Tuple2<String, Integer> , Tuple1<String>>) (value , out) -> {
+                    if ("liu yang".equals(value.f0)) {
+                        //返回0个元素
+                    } else if (value.f0.contains("intsmaze")) {
+                        //返回n个元素
+                        Arrays.stream(value.f0.split(" ")).map(word -> Tuple1.of("Split intsmaze：" + word)).forEach(out::collect);
+                    } else {
+                        //返回1个元素
+                        out.collect(Tuple1.of("Not included intsmaze：" + value.f0));
+                    }
+                })
+                .returns(Types.TUPLE(Types.STRING));
+        
+        resultStream.print("输出结果");
+
+        env.execute("FlatMapTemplate");
+    }
+}
+```
+
+##### Filter
+
+场景：对输入的元素进行判断来决定保留该元素还是丢弃该元素，返回true保留，返回false丢弃
+
+```java
+public class Operator {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStream<Long> streamSource = env.generateSequence(1, 5);
+        DataStream<Long> filterStream = streamSource.filter(value -> value != 2L && value != 4L);
+        filterStream.print("输出结果");
+        env.execute("Filter Template");
+    }
+}
+```
+
+##### KeyBy
+
+场景：将数据流分成不相交的流分区，所有具有相同key的元素都被分配到相同的流分区
+
+Flink的数据模型不要求数据集合中的元素一定要基于键值对，因此不需要将数据集合中的元素类型封装成key-value形式
+
+Flink提供了三种方式来指定元素的哪一个字段作为key
+
+* 使用索引定义键：
+* 使用字段表达式定义键：
+* 使用键选择器函数定义键：
