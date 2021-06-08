@@ -409,6 +409,319 @@ Flink的数据模型不要求数据集合中的元素一定要基于键值对，
 
 Flink提供了三种方式来指定元素的哪一个字段作为key
 
-* 使用索引定义键：
-* 使用字段表达式定义键：
-* 使用键选择器函数定义键：
+* 使用索引定义键：对于元组类型的数据流，可以通过定义索引的方式指定键
+
+```java
+public class Operator {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(10);
+        List<Tuple2<Integer, Integer>> list = new ArrayList<Tuple2<Integer, Integer>>();
+        list.add(new Tuple2<>(1, 11));
+        list.add(new Tuple2<>(1, 22));
+        list.add(new Tuple2<>(3, 33));
+        list.add(new Tuple2<>(5, 55));
+
+        DataStream<Tuple2<Integer, Integer>> dataStream = env.fromCollection(list);
+
+        KeyedStream<Tuple2<Integer, Integer>, Tuple> keyedStream = dataStream.keyBy(0);
+
+        keyedStream.print("输出结果");
+
+        env.execute("KeyByTemplate");
+    }
+}
+```
+
+* 使用字段表达式定义键：对于指定元组中嵌套的元组的键或Bean类中某个字段为键，索引的方式就无法实现。字段表达式可以很容易的选择（嵌套）复合类型中的字段
+
+```java
+public class Operator {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(10);
+        List<Tuple2<Integer, Integer>> list = new ArrayList<Tuple2<Integer, Integer>>();
+        list.add(new Tuple2<>(1, 11));
+        list.add(new Tuple2<>(1, 22));
+        list.add(new Tuple2<>(3, 33));
+        list.add(new Tuple2<>(5, 55));
+
+        DataStream<Tuple2<Integer, Integer>> dataStream = env.fromCollection(list);
+
+        KeyedStream<Tuple2<Integer, Integer>, Tuple> keyedStream = dataStream.keyBy("f0");
+
+        keyedStream.print("输出结果");
+
+        env.execute("KeyByTemplate");
+    }
+}
+```
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        List<Person> list = new ArrayList<>();
+        list.add(new Person("张三", 20));
+        list.add(new Person("张三", 28));
+        list.add(new Person("李四", 20));
+
+        DataStream<Person> dataStream = env
+                .fromCollection(list)
+                .keyBy("age");
+        dataStream.print();
+        env.execute("testKeyWithPOJO");
+    }
+
+		public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        List<Tuple2<Person, Integer>> list = new ArrayList<Tuple2<Person, Integer>>();
+        list.add(new Tuple2<>(new Person("张三", 20), 1));
+        list.add(new Tuple2<>(new Person("张三", 28), 2));
+        list.add(new Tuple2<>(new Person("李四", 20), 33));
+
+        DataStream<Tuple2<Person, Integer>> dataStream = env
+                .fromCollection(list)
+                .keyBy("f0.age");
+        dataStream.print();
+        env.execute("testKeyWithPOJO");
+    }
+
+    public static class Person {
+
+        private String name;
+        private int age;
+
+        public Person() {
+        }
+
+        public Person(String name, int age) {
+            this.name = name;
+            this.age = age;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public int getAge() {
+            return age;
+        }
+
+        public void setAge(int age) {
+            this.age = age;
+        }
+
+        @Override
+        public String toString() {
+            return "Person{" +
+                    "name='" + name + '\'' +
+                    ", age=" + age +
+                    '}';
+        }
+
+    }
+```
+
+* 使用键选择器函数定义键：键选择器函数接收单个元素作为输入，并返回元素的键
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        List<Person> list = new ArrayList<>();
+        list.add(new Person("张三", 20));
+        list.add(new Person("张三", 28));
+        list.add(new Person("李四", 20));
+
+        DataStream<Person> dataStream = env
+                .fromCollection(list)
+                .keyBy(element -> element.name);
+        dataStream.print();
+        env.execute("testKeyWithPOJO");
+    }
+```
+
+##### Reduce
+
+ 场景：将KeyStream中具有相同key的元素合并为单个值，**并且总是将两个元素合并为一个元素，具体为将上一个合并过的值和当前输入的元素结合，产生新的值并发出，直到仅剩一个值为止**
+
+```java
+   
+public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        List<Trade> list = new ArrayList<>();
+        list.add(new Trade("123XXXXX", 899, "2018-06"));
+        list.add(new Trade("123XXXXX", 699, "2018-06"));
+        list.add(new Trade("188XXXXX", 88, "2018-07"));
+        list.add(new Trade("188XXXXX", 69, "2018-07"));
+        list.add(new Trade("158XXXXX", 100, "2018-06"));
+        list.add(new Trade("158XXXXX", 1000, "2018-06"));
+
+        DataStream<Trade> dataSource = env.fromCollection(list);
+
+        DataStream<Trade> resultStream = dataSource
+                .keyBy("cardNum")
+                .reduce((value1, value2) -> {
+                    String theadName = Thread.currentThread().getName();
+                    String info = "theadName:" + theadName;
+                    System.out.println(info);W
+                    return new Trade(value1.getCardNum(), value1.getTrade() + value2.getTrade(), "----");
+                });
+        resultStream.print("输出结果");
+        env.execute("Reduce Template");
+    }
+
+public static class Trade {
+
+        private String cardNum;
+
+        private int trade;
+
+        private String time;
+
+        public Trade() {
+        }
+
+        public Trade(String cardNum, int trade, String time) {
+            super();
+            this.cardNum = cardNum;
+            this.trade = trade;
+            this.time = time;
+        }
+
+        public String getCardNum() {
+            return cardNum;
+        }
+
+        public void setCardNum(String cardNum) {
+            this.cardNum = cardNum;
+        }
+
+        public int getTrade() {
+            return trade;
+        }
+
+        public void setTrade(int trade) {
+            this.trade = trade;
+        }
+
+        public String getTime() {
+            return time;
+        }
+
+        public void setTime(String time) {
+            this.time = time;
+        }
+
+        @Override
+        public String toString() {
+            return "Trade [cardNum=" + cardNum + ", trade=" + trade + ", time="
+                    + time + "]";
+        }
+
+    }
+```
+
+从标准输出流中可以发现，同一个分组下第一个元素进入算子时，由于只有一个元素，无法合并，所以会将该元素保存在算子中，同时直接发给下游算子。当同一个分组的第二个元素进入算子时，会执行合并操作，然后将合并的结果保存在算子中，同时发给下游算子
+
+##### Aggregations
+
+场景：Aggregations提供了一系列内置的聚合方法，reduce是这些聚合方法的通用方法
+
+Flink提供两种方式对指定字段进行聚合
+
+* 对于Bean类类型可以指定字段名称，同样可以指定嵌套的字段
+* 对于元组类型可以指定索引
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        List<Trade> list = new ArrayList<Trade>();
+        list.add(new Trade("188XXX", 30, "2018-07"));
+        list.add(new Trade("188XXX", 20, "2018-11"));
+        list.add(new Trade("158XXX", 1, "2018-07"));
+        list.add(new Trade("158XXX", 2, "2018-06"));
+        DataStream<Trade> streamSource = env.fromCollection(list);
+
+        KeyedStream<Trade, Tuple> keyedStream = streamSource.keyBy("cardNum");
+
+        keyedStream.sum("trade").print("sum");
+
+        keyedStream.min("trade").print("min");
+
+        keyedStream.maxBy("trade").print("minBy");
+
+        env.execute("Aggregations Template");
+
+    }
+```
+
+maxBy取分组中指定字段具有最小值的元素
+
+##### Split和Select
+
+场景：Split算子将元素发送到指定命名的输出中，**该算子将被弃用，请使用side ouput替代**。Select算子从切分的数据流中获取指定的数据流，Select算子的参数就是Split算子中定义的输出名称
+
+```java
+    public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        List<Trade> list = new ArrayList<Trade>();
+        list.add(new Trade("185XXX", 899, "周一"));
+        list.add(new Trade("155XXX", 1199, "周二"));
+        list.add(new Trade("138XXX", 19, "周三"));
+        DataStream<Trade> dataStream = env.fromCollection(list);
+
+        SplitStream<Trade> splitStream = dataStream.split(value -> {
+            List<String> output = new ArrayList<>();
+            if (value.getTrade() < 100) {
+                output.add("Small amount");
+                output.add("Small amount backup");
+            } else if (value.getTrade() > 100) {
+                output.add("Large amount");
+            }
+            return output;
+        });
+
+        splitStream.select("Small amount")
+                .print("Small amount:");
+
+        splitStream.select("Large amount").
+                print("Large amount:");
+
+        splitStream.select("Small amount backup", "Large amount")
+                .print("Small amount backup and Large amount");
+
+        env.execute("SplitTemplate");
+    }
+```
+
+##### Project
+
+场景：Project算子作用在元素数据类型为元组的数据流中，根据指定的索引从元组中选择对应的字段组成一个子集，Project算子的参数是变长参数，输出元组的字段顺序与Project算子参数的字段索引的顺序相对应。该算子作用类似SQL中的select
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        List<Tuple3<String, Integer, String>> list = new ArrayList<Tuple3<String, Integer, String>>();
+        list.add(new Tuple3<>("185XXX", 899, "周一"));
+        list.add(new Tuple3<>("155XXX", 1199, "周二"));
+        list.add(new Tuple3<>("138XXX", 19, "周三"));
+        DataStream<Tuple3<String, Integer, String>> streamSource = env.fromCollection(list);
+
+        DataStream<Tuple2<String, String>> result = streamSource.project(2, 0);
+        result.print("输出结果");
+        env.execute("Project Template");
+    }
+
+```
+
+
+
