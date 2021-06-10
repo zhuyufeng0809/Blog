@@ -723,5 +723,143 @@ maxBy取分组中指定字段具有最小值的元素
 
 ```
 
+##### Union
 
+场景：将两个或者多个**相同类型**的数据流合并成包含所有元素的新数据流
+
+```java
+    public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        DataStream<Long> dataStream = env.generateSequence(1, 2);
+
+        DataStream<Long> otherStream = env.generateSequence(1001, 1002);
+
+        DataStream<Long> union = dataStream.union(otherStream);
+        union.print("输出结果");
+        env.execute("Union Template");
+    }
+```
+
+##### Connect
+
+场景：union虽然可以合并多个数据流，但有一个限制，即多个数据流的数据类型必须相同。connect提供了union类似的功能，用来合并两个数据流，与union不同的是，**connect只能合并两个数据流，两个数据流的数据类型可以不一致**
+
+CoMapFunction处理connect之后的数据流，map1处理第一个流的数据，map2处理第二个流的数据，CoFlatMapFunction同理。**Flink并不能保证两个函数调用顺序，两个函数的调用依赖于两个数据流数据的流入先后顺序，即第一个数据流有数据到达时，map1或flatMap1会被调用，第二个数据流有数据到达时，map2或flatMap2会被调用**
+
+```java
+    public static StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+    public static ConnectedStreams<Long, String> init() {
+        List<Long> listLong = new ArrayList<Long>();
+        listLong.add(1L);
+        listLong.add(2L);
+
+        List<String> listStr = new ArrayList<String>();
+        listStr.add("www cnblogs com intsmaze");
+        listStr.add("hello intsmaze");
+        listStr.add("hello flink");
+        listStr.add("hello java");
+
+        DataStream<Long> longStream = env.fromCollection(listLong);
+        DataStream<String> strStream = env.fromCollection(listStr);
+        return longStream.connect(strStream);
+    }
+
+    public void testConnectMap() throws Exception {
+
+        ConnectedStreams<Long, String> connectedStreams = init();
+
+        DataStream<String> connectedMap = connectedStreams
+                .map(new CoMapFunction<Long, String, String>() {
+                    @Override
+                    public String map1(Long value) {
+                        return "数据来自元素类型为long的流" + value;
+                    }
+
+                    @Override
+                    public String map2(String value) {
+                        return "数据来自元素类型为String的流" + value;
+                    }
+                });
+        connectedMap.print();
+        env.execute("CoMapFunction");
+    }
+
+    public void testConnectFlatMap() throws Exception {
+
+        ConnectedStreams<Long, String> connectedStreams = init();
+
+        DataStream<String> connectedFlatMap = connectedStreams
+                .flatMap(new CoFlatMapFunction<Long, String, String>() {
+                    @Override
+                    public void flatMap1(Long value, Collector<String> out) {
+                        out.collect(value.toString());
+                    }
+
+                    @Override
+                    public void flatMap2(String value, Collector<String> out) {
+                        for (String word : value.split(" ")) {
+                            out.collect(word);
+                        }
+                    }
+                });
+        connectedFlatMap.print();
+        env.execute("CoFlatMapFunction");
+    }
+```
+
+##### Iterate
+
+场景：迭代计算，用于实现需要不断更新模型的算法。Iterate算子将一个算子的输出重定向到某个先前的操作符，并循环。因为流式处理永远不会完成，所以没有最大迭代次数，开发者需要指定数据流的哪一部分去迭代，哪一部分转发下游算子，通常使用Split算子或Filter实现指定
+
+Iterate算子由两个方法组成：
+
+* iterate：负责启动迭代部分，返回的IterativeStream表示迭代的开始，带有迭代的DataStream永远不会终止，用户可以指定参数设置迭代头的最大等待时间，如果指定时间内没有收到数据，则流会终止，默认值为0秒
+* closeWith：定义了迭代部分的末尾，指定的DataStream参数作为反馈并作为迭代头的输入数据源
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        List<Tuple2<String, Integer>> list = new ArrayList<>();
+        list.add(new Tuple2<>("flink", 33));
+        list.add(new Tuple2<>("strom", 32));
+        list.add(new Tuple2<>("spark", 15));
+        list.add(new Tuple2<>("java", 18));
+        list.add(new Tuple2<>("python", 31));
+        list.add(new Tuple2<>("scala", 29));
+
+
+        DataStream<Tuple2<String, Integer>> inputStream = env.fromCollection(list);
+
+        IterativeStream<Tuple2<String, Integer>> itStream = inputStream
+                .iterate(5000);
+
+        SplitStream<Tuple2<String, Integer>> split = itStream
+                .map((MapFunction<Tuple2<String, Integer>, Tuple2<String, Integer>>) value -> {
+                    Thread.sleep(1000);
+                    System.out.println("迭代流上面调用逻辑处理方法，参数为:" + value);
+                    return new Tuple2<>(value.f0, --value.f1);
+                }).split((OutputSelector<Tuple2<String, Integer>>) value -> {
+                    List<String> output = new ArrayList<>();
+                    if (value.f1 > 30) {
+                        System.out.println("返回迭代数据:" + value);
+                        output.add("iterate");
+                    } else {
+                        output.add("output");
+                    }
+                    return output;
+                });
+
+        itStream.closeWith(split.select("iterate"));
+
+        split.select("output").print("output:");
+
+        env.execute("IterateTemplate");
+
+    }
+```
 
