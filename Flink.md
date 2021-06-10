@@ -817,7 +817,7 @@ CoMapFunction处理connect之后的数据流，map1处理第一个流的数据�
 Iterate算子由两个方法组成：
 
 * iterate：负责启动迭代部分，返回的IterativeStream表示迭代的开始，带有迭代的DataStream永远不会终止，用户可以指定参数设置迭代头的最大等待时间，如果指定时间内没有收到数据，则流会终止，默认值为0秒
-* closeWith：定义了迭代部分的末尾，指定的DataStream参数作为反馈并作为迭代头的输入数据源
+* closeWith：定义了迭代部分的末尾，**指定的DataStream参数作为反馈并作为迭代头的输入数据源**
 
 ```java
     public static void main(String[] args) throws Exception {
@@ -861,5 +861,59 @@ Iterate算子由两个方法组成：
         env.execute("IterateTemplate");
 
     }
+```
+
+#### 富函数
+
+将RichFunction接口称为富函数，所有算子上应用的函数都有富函数版本。富函数在基本函数的基础上额外提供了一系列方法方便开发者丰富自己的业务逻辑
+
+* void open(Configuration parameters)：执行算子前的初始化方法，在算子第一次被调用之前调用，适合做一些初始化工作
+* void close() throws Exception：在算子最后一次调用之后调用，适合做一些释放资源的工作
+* RuntimeContext getRuntimeContext()：获取算子运行时的上下文信息。如算子并行度、算子的子任务索引、执行算子的任务名称等
+* IterationRuntimeContext getIterationRuntimeContext()：获取迭代算子运行时的上下文信息
+* void setRuntimeContext(RuntimeContext t)：设置算子运行时的上下文信息
+
+使用富函数需要实现算子对应的富函数抽象类。不同算子对应的富函数抽象类都继承自AbstractRichFunction，并且实现了算子对应的函数。而AbstractRichFunction则实现了RichFunction接口
+
+```java
+    public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(2);
+
+        DataStream<Long> streamSource = env.generateSequence(1, 100);
+        DataStream<Long> dataStream = streamSource
+                .flatMap(new RichFunctionTemplate())
+                .name("intsmaze-flatMap");
+        dataStream.print();
+
+        env.execute("RichFunctionTemplate");
+    }
+
+class RichFunctionTemplate extends RichFlatMapFunction<Long, Long> {
+
+    @Override
+    public void open(Configuration parameters) {
+        RuntimeContext rc = getRuntimeContext();
+        String taskName = rc.getTaskName();
+        String subtaskName = rc.getTaskNameWithSubtasks();
+        int subtaskIndexOf = rc.getIndexOfThisSubtask();
+        int parallel = rc.getNumberOfParallelSubtasks();
+        int attemptNum = rc.getAttemptNumber();
+        System.out.println("调用open方法：" + taskName + "||" + subtaskName + "||"
+        + subtaskIndexOf + "||" + parallel + "||" + attemptNum);
+    }
+
+    @Override
+    public void flatMap(Long input, Collector<Long> out) throws Exception {
+        Thread.sleep(1000);
+        out.collect(input);
+    }
+
+    @Override
+    public void close() {
+        System.out.println("调用close方法");
+    }
+}
 ```
 
