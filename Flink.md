@@ -37,7 +37,7 @@ Flink程序本质是并行和分布式的
 
 分布式计算环境中，**Flink会将具有依赖关系的多个算子的子任务链接成一个任务链，每个任务链由一个线程执行**。将多个算子的子任务链接为一个任务是Flink的一个优化：**这减少了线程与线程上下文切换的开销和缓冲的开销，并在减少延迟的同时提高了吞吐量（减少了序列化和反序列化，减少数据在缓冲区的交换）**
 
-在默认情况下，Flink会尽可能链接多个算子的子任务形成一个任务链。同时，Flink在API层面允许开发者手动配置算子子任务的链接策略。Flink允许开发者再DataStream中调用任务链函数以此对任务链进行细粒度的控制，Flink提供了三种方式对任务链进行细粒度控制
+在默认情况下，Flink会**尽可能**链接多个算子的子任务形成一个任务链。同时，Flink在API层面允许开发者手动配置算子子任务的链接策略。Flink允许开发者再DataStream中调用任务链函数以此对任务链进行细粒度的控制，Flink提供了三种方式对任务链进行细粒度控制
 
 ```java
 dataStream.startNewChain
@@ -195,7 +195,95 @@ dataStream.slotSharingGroup("XXXX-name")
 
 ##### 禁用链接
 
+###### 在算子上禁用链接
 
+在算子上禁用链接，该算子不会被之前或之后的算子链接上
+
+```java
+    public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(3);
+
+        DataStream<Tuple2<String, Integer>> inputStream = env.addSource(new RichSourceFunction<Tuple2<String, Integer>>() {
+            final int sleep = 6000;
+
+            @Override
+            public void run(SourceContext<Tuple2<String, Integer>> ctx) throws Exception {
+                String subtaskName = getRuntimeContext().getTaskNameWithSubtasks();
+                String info = "source操作所属子任务名称:";
+                while (true) {
+                    Tuple2<String, Integer> tuple2 = new Tuple2<>("185XXX", 899);
+                    ctx.collect(tuple2);
+                    System.out.println(info + subtaskName + ",元素:" + tuple2);
+                    Thread.sleep(sleep);
+
+                    tuple2 = new Tuple2<>("155XXX", 1199);
+                    ctx.collect(tuple2);
+                    System.out.println(info + subtaskName + ",元素:" + tuple2);
+                    Thread.sleep(sleep);
+
+                    tuple2 = new Tuple2<>("138XXX", 19);
+                    ctx.collect(tuple2);
+                    System.out.println(info + subtaskName + ",元素:" + tuple2);
+                    Thread.sleep(sleep);
+                }
+            }
+
+            @Override
+            public void cancel() {
+                System.out.println("调用cancel");
+            }
+        });
+
+        DataStream<Tuple2<String, Integer>> filter = inputStream.filter(
+                new RichFilterFunction<Tuple2<String, Integer>>() {
+                    @Override
+                    public boolean filter(Tuple2<String, Integer> value) {
+                        System.out.println("filter操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                        return true;
+                    }
+                });
+
+        DataStream<Tuple2<String, Integer>> mapOne = filter.map(new RichMapFunction<Tuple2<String, Integer>, Tuple2<String, Integer>>() {
+            @Override
+            public Tuple2<String, Integer> map(Tuple2<String, Integer> value) {
+                System.out.println("map-one操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                return value;
+            }
+        }).disableChaining();
+
+        DataStream<Tuple2<String, Integer>> mapTwo = mapOne.map(new RichMapFunction<Tuple2<String, Integer>, Tuple2<String, Integer>>() {
+            @Override
+            public Tuple2<String, Integer> map(Tuple2<String, Integer> value) {
+                System.out.println("map-two操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                return value;
+            }
+        });
+        mapTwo.print();
+
+        env.execute("disableChaining");
+    }
+```
+
+从打印信息可以看出，整个程序共有4个独立的任务链。数据源算子单独作为一个任务链"Custom Source"，该任务链只有一个子任务。Filter算子单独作为一个任务链，该任务链有3个子任务。第一个Map算子单独作为一个任务链，该任务链有3个子任务。第二个Map算子和print算子链接为一个任务链，该任务链有3个子任务。任务链的分界以调用disableChaining()的算子为界
+
+打包部署到集群上运行，可以看到该作业有10个子任务，运行在3个任务槽上
+
+###### 全局禁用链接
+
+调用StreamExecutionEnvironment的disableOperatorChaining()方法可以为整个程序关闭算子链接，出于性能考虑，一般不建议使用整个方法
+
+```java
+...
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+env.disableOperatorChaining();
+...
+```
+
+从打印信息可以看出，每个算子都单独作为一个任务链，相邻算子的子任务不会进行任何链接操作去形成任务链
+
+打包部署到集群上运行，可以看到该作业有13个子任务，运行在3个任务槽上
 
 #### 任务槽和资源
 
@@ -217,6 +305,81 @@ dataStream.slotSharingGroup("XXXX-name")
 * 共享任务槽可以提高资源利用率
 
 一个好的默认任务槽数量是服务器CPU核心的数量，对于有超线程的服务器，则是两倍CPU核心的数量。Flink默认开启共享任务槽机制
+
+除了Flink的默认任务槽共享组，Flink也允许开发者手动设置算子的任务槽共享组，**指定将具有相同任务槽共享组的算子放入到相同的任务槽，同时将没有任务槽共享组的算子保留在其他任务槽中。Flink默认的任务槽共享组的名称为"default"，在没有设置任务槽共享组的情况下，所有的算子都在该共享组下**
+
+可以调用算子的slotSharingGroup()方法显示将算子放入指定的任务槽共享组
+
+**在对算子指定任务槽共享组后，该算子后面的算子都位于该任务槽共享组下**
+
+```java
+    public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(3);
+
+        DataStream<Tuple2<String, Integer>> inputStream = env.addSource(new RichSourceFunction<Tuple2<String, Integer>>() {
+            final int sleep = 6000;
+
+            @Override
+            public void run(SourceContext<Tuple2<String, Integer>> ctx) throws Exception {
+                String subtaskName = getRuntimeContext().getTaskNameWithSubtasks();
+                String info = "source操作所属子任务名称:";
+                while (true) {
+                    Tuple2<String, Integer> tuple2 = new Tuple2<>("185XXX", 899);
+                    ctx.collect(tuple2);
+                    System.out.println(info + subtaskName + ",元素:" + tuple2);
+                    Thread.sleep(sleep);
+
+                    tuple2 = new Tuple2<>("155XXX", 1199);
+                    ctx.collect(tuple2);
+                    System.out.println(info + subtaskName + ",元素:" + tuple2);
+                    Thread.sleep(sleep);
+
+                    tuple2 = new Tuple2<>("138XXX", 19);
+                    ctx.collect(tuple2);
+                    System.out.println(info + subtaskName + ",元素:" + tuple2);
+                    Thread.sleep(sleep);
+                }
+            }
+
+            @Override
+            public void cancel() {
+                System.out.println("调用cancel");
+            }
+        });
+
+        DataStream<Tuple2<String, Integer>> filter = inputStream.filter(
+                new RichFilterFunction<Tuple2<String, Integer>>() {
+                    @Override
+                    public boolean filter(Tuple2<String, Integer> value) {
+                        System.out.println("filter操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                        return true;
+                    }
+                });
+
+        DataStream<Tuple2<String, Integer>> mapOne = filter.map(new RichMapFunction<Tuple2<String, Integer>, Tuple2<String, Integer>>() {
+            @Override
+            public Tuple2<String, Integer> map(Tuple2<String, Integer> value) {
+                System.out.println("map-one操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                return value;
+            }
+        }).slotSharingGroup("custom-name");
+
+        DataStream<Tuple2<String, Integer>> mapTwo = mapOne.map(new RichMapFunction<Tuple2<String, Integer>, Tuple2<String, Integer>>() {
+            @Override
+            public Tuple2<String, Integer> map(Tuple2<String, Integer> value) {
+                System.out.println("map-two操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                return value;
+            }
+        });
+        mapTwo.print();
+
+        env.execute("slotSharingGroup");
+    }
+```
+
+要观察设置任务槽共享组的效果，必须将程序部署到Flink集群上。可以看到该作业有7个子任务，运行在6个任务槽上
 
 ### Flink on Yarn
 
