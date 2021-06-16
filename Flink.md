@@ -37,7 +37,165 @@ Flink程序本质是并行和分布式的
 
 分布式计算环境中，**Flink会将具有依赖关系的多个算子的子任务链接成一个任务链，每个任务链由一个线程执行**。将多个算子的子任务链接为一个任务是Flink的一个优化：**这减少了线程与线程上下文切换的开销和缓冲的开销，并在减少延迟的同时提高了吞吐量（减少了序列化和反序列化，减少数据在缓冲区的交换）**
 
-在默认情况下，Flink会尽可能链接多个算子的子任务形成一个任务链。同时，Flink在API层面允许开发者手动配置算子子任务的链接策略
+在默认情况下，Flink会尽可能链接多个算子的子任务形成一个任务链。同时，Flink在API层面允许开发者手动配置算子子任务的链接策略。Flink允许开发者再DataStream中调用任务链函数以此对任务链进行细粒度的控制，Flink提供了三种方式对任务链进行细粒度控制
+
+```java
+dataStream.startNewChain
+dataStream.disableChaining
+dataStream.slotSharingGroup("XXXX-name")
+```
+
+需要注意的是，**这些任务链函数只能在转换算子（数据源算子不算转换算子）之后使用，因为这些函数引用了前一个转换**
+
+##### 默认链接
+
+```java
+    public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(3);
+
+        DataStream<Tuple2<String, Integer>> inputStream = env.addSource(new RichSourceFunction<Tuple2<String, Integer>>() {
+            final int sleep = 30000;
+
+            @Override
+            public void run(SourceContext<Tuple2<String, Integer>> ctx) throws Exception {
+                String subtaskName = getRuntimeContext().getTaskNameWithSubtasks();
+                String info = "source操作所属子任务名称:";
+                Tuple2<String, Integer> tuple2 = new Tuple2<>("185XXX", 899);
+                ctx.collect(tuple2);
+                System.out.println(info + subtaskName + ",元素:" + tuple2);
+                Thread.sleep(sleep);
+
+                tuple2 = new Tuple2<>("155XXX", 1199);
+                ctx.collect(tuple2);
+                System.out.println(info + subtaskName + ",元素:" + tuple2);
+                Thread.sleep(sleep);
+
+                tuple2 = new Tuple2<>("138XXX", 19);
+                ctx.collect(tuple2);
+                System.out.println(info + subtaskName + ",元素:" + tuple2);
+                Thread.sleep(sleep);
+            }
+
+            @Override
+            public void cancel() {
+                System.out.println("调用cancel");
+            }
+        });
+
+        DataStream<Tuple2<String, Integer>> filter = inputStream.filter(
+                new RichFilterFunction<Tuple2<String, Integer>>() {
+                    @Override
+                    public boolean filter(Tuple2<String, Integer> value) {
+                        System.out.println("filter操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                        return true;
+                    }
+                });
+
+        DataStream<Tuple2<String, Integer>> mapOne = filter.map(new RichMapFunction<Tuple2<String, Integer>, Tuple2<String, Integer>>() {
+            @Override
+            public Tuple2<String, Integer> map(Tuple2<String, Integer> value) {
+                System.out.println("map-one操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                return value;
+            }
+        });
+
+        DataStream<Tuple2<String, Integer>> mapTwo = mapOne.map(new RichMapFunction<Tuple2<String, Integer>, Tuple2<String, Integer>>() {
+            @Override
+            public Tuple2<String, Integer> map(Tuple2<String, Integer> value) {
+                System.out.println("map-two操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                return value;
+            }
+        });
+        mapTwo.print();
+
+        env.execute("chain");
+    }
+```
+
+从打印信息可以看出，算子的子任务根据依赖关系相互链接为一个"Filter -> Map -> Map -> Sink: Print to Std. Out"的任务链，该任务链一共有3个子任务，同一个任务链中的子任务由同一个线程处理。数据源算子单独作为一个任务链"Custom Source"，该任务链只有一个子任务
+
+打包部署到集群上运行，可以看到该作业有4个子任务，运行在3个任务槽上
+
+##### 开启新链接
+
+```java
+    public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(3);
+
+        DataStream<Tuple2<String, Integer>> inputStream = env.addSource(new RichSourceFunction<Tuple2<String, Integer>>() {
+            final int sleep = 6000;
+
+            @Override
+            public void run(SourceContext<Tuple2<String, Integer>> ctx) throws Exception {
+                String subtaskName = getRuntimeContext().getTaskNameWithSubtasks();
+                String info = "source操作所属子任务名称:";
+                while (true) {
+                    Tuple2<String, Integer> tuple2 = new Tuple2<>("185XXX", 899);
+                    ctx.collect(tuple2);
+                    System.out.println(info + subtaskName + ",元素:" + tuple2);
+                    Thread.sleep(sleep);
+
+                    tuple2 = new Tuple2<>("155XXX", 1199);
+                    ctx.collect(tuple2);
+                    System.out.println(info + subtaskName + ",元素:" + tuple2);
+                    Thread.sleep(sleep);
+
+                    tuple2 = new Tuple2<>("138XXX", 19);
+                    ctx.collect(tuple2);
+                    System.out.println(info + subtaskName + ",元素:" + tuple2);
+                    Thread.sleep(sleep);
+                }
+            }
+
+            @Override
+            public void cancel() {
+                System.out.println("调用cancel");
+            }
+        });
+
+        DataStream<Tuple2<String, Integer>> filter = inputStream.filter(
+                new RichFilterFunction<Tuple2<String, Integer>>() {
+                    @Override
+                    public boolean filter(Tuple2<String, Integer> value) {
+                        System.out.println("filter操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                        return true;
+                    }
+                });
+
+        DataStream<Tuple2<String, Integer>> mapOne = filter.map(new RichMapFunction<Tuple2<String, Integer>, Tuple2<String, Integer>>() {
+            @Override
+            public Tuple2<String, Integer> map(Tuple2<String, Integer> value) {
+                System.out.println("map-one操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                return value;
+            }
+        }).startNewChain();
+
+        DataStream<Tuple2<String, Integer>> mapTwo = mapOne.map(new RichMapFunction<Tuple2<String, Integer>, Tuple2<String, Integer>>() {
+            @Override
+            public Tuple2<String, Integer> map(Tuple2<String, Integer> value) {
+                System.out.println("map-two操作所属子任务名称:" + getRuntimeContext().getTaskNameWithSubtasks() + ",元素:" + value);
+                return value;
+            }
+        });
+        mapTwo.print();
+
+        env.execute("chain");
+    }
+```
+
+调用startNewChain()的算子，会启动一个新的任务链。该算子不会链接到前面的算子，但后面的算子可以链接到该算子
+
+从打印信息可以看出，整个程序共有3个独立的任务链。数据源算子单独作为一个任务链"Custom Source"，该任务链只有一个子任务。Filter算子单独作为一个任务链，该任务链有3个子任务。两个Map算子和print算子链接为一个任务链，该任务链有3个子任务。任务链的分界以调用startNewChain()的算子为界
+
+打包部署到集群上运行，可以看到该作业有7个子任务，运行在3个任务槽上
+
+##### 禁用链接
+
+
 
 #### 任务槽和资源
 
@@ -61,6 +219,10 @@ Flink程序本质是并行和分布式的
 一个好的默认任务槽数量是服务器CPU核心的数量，对于有超线程的服务器，则是两倍CPU核心的数量。Flink默认开启共享任务槽机制
 
 ### Flink on Yarn
+
+#### 打包
+
+通过maven-shade-plugin插件打包，点击Idea的maven侧边栏的package按钮，生成两个jar包，使用不带original前缀的jar包
 
 #### Yarn集群中启动长期运行的Flink集群
 
@@ -927,37 +1089,34 @@ Iterate算子由两个方法组成：
 
         DataStream<Long> streamSource = env.generateSequence(1, 100);
         DataStream<Long> dataStream = streamSource
-                .flatMap(new RichFunctionTemplate())
+                .flatMap(new RichFlatMapFunction<Long, Long>() {
+                    @Override
+                    public void open(Configuration parameters) {
+                        RuntimeContext rc = getRuntimeContext();
+                        String taskName = rc.getTaskName();
+                        String subtaskName = rc.getTaskNameWithSubtasks();
+                        int subtaskIndexOf = rc.getIndexOfThisSubtask();
+                        int parallel = rc.getNumberOfParallelSubtasks();
+                        int attemptNum = rc.getAttemptNumber();
+                        System.out.println("调用open方法：" + taskName + "||" + subtaskName + "||"
+                                + subtaskIndexOf + "||" + parallel + "||" + attemptNum);
+                    }
+
+                    @Override
+                    public void flatMap(Long input, Collector<Long> out) throws Exception {
+                        Thread.sleep(1000);
+                        out.collect(input);
+                    }
+
+                    @Override
+                    public void close() {
+                        System.out.println("调用close方法");
+                    }
+                })
                 .name("intsmaze-flatMap");
         dataStream.print();
 
         env.execute("RichFunctionTemplate");
     }
-
-class RichFunctionTemplate extends RichFlatMapFunction<Long, Long> {
-
-    @Override
-    public void open(Configuration parameters) {
-        RuntimeContext rc = getRuntimeContext();
-        String taskName = rc.getTaskName();
-        String subtaskName = rc.getTaskNameWithSubtasks();
-        int subtaskIndexOf = rc.getIndexOfThisSubtask();
-        int parallel = rc.getNumberOfParallelSubtasks();
-        int attemptNum = rc.getAttemptNumber();
-        System.out.println("调用open方法：" + taskName + "||" + subtaskName + "||"
-        + subtaskIndexOf + "||" + parallel + "||" + attemptNum);
-    }
-
-    @Override
-    public void flatMap(Long input, Collector<Long> out) throws Exception {
-        Thread.sleep(1000);
-        out.collect(input);
-    }
-
-    @Override
-    public void close() {
-        System.out.println("调用close方法");
-    }
-}
 ```
 

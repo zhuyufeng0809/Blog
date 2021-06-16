@@ -6,7 +6,7 @@ https://www.cnblogs.com/cjsblog/p/11613708.html
 
 Java中可以实现一个类中包含另外一个类，且不需要提供任何的类名直接实例化。匿名类是不能有名字的类，它们不能被引用，只能在创建时用new语句来声明它们。
 
-**匿名类通常继承一个父类或实现一个接口**
+**匿名类通常继承一个父类或实现一个接口或实现一个抽象类**
 
 匿名类语法格式：
 
@@ -14,13 +14,13 @@ Java中可以实现一个类中包含另外一个类，且不需要提供任何�
 class outerClass {
 
     // 定义一个匿名类
-    object1 = new 父类名|接口名(参数列表) {
+    object1 = new 父类名|接口名|抽象类名(参数列表) {
          // 匿名类代码
     };
 }
 ```
 
-```
+```java
 public class AnonymousClass {
     public static void main(String[] args) {
         AnonymousDemo1 an1 = new AnonymousDemo1();
@@ -28,6 +28,9 @@ public class AnonymousClass {
 
         AnonymousDemo2 an2 = new AnonymousDemo2();
         an2.createClass();
+      
+        AnonymousDemo3 an3 = new AnonymousDemo3();
+        an3.createClass();
     }
 }
 
@@ -63,6 +66,22 @@ class AnonymousDemo2 {
             }
         };
         p1.display();
+    }
+}
+
+abstract class AbClass {
+    public abstract void fuck();
+}
+
+class AnonymousDemo3 {
+    public void createClass() {
+        // 匿名类实现一个抽象类
+        AbClass abClass = new AbClass() {
+            @Override
+            public void fuck() {
+                System.out.println("fuck you");
+            }
+        };
     }
 }
 ```
