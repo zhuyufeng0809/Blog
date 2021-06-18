@@ -1297,7 +1297,7 @@ int partition(K key, int numPartitions);
 
 参数key用来计算元素发往哪个分区（并行实例），**参数numPartitions为下游算子分区（并行实例）的总数量（numPartitions不能大于并行度，否则会报错！！）**。**分区的数值从0开始，返回值的范围只能是从0到numPartitions -1之间**
 
-调用算子的partitionCustom()方法指定元素发往下游算子的哪一个分区，Flink提供了三个重载的partitionCustom()方法
+调用算子的partitionCustom()方法指定元素发往下游算子的哪一个并行实例，Flink提供了三个重载的partitionCustom()方法
 
 ```java
 public <K> DataStream<T> partitionCustom(Partitioner<K> partitioner, int field)
@@ -1370,7 +1370,381 @@ public <K> DataStream<T> partitionCustom(Partitioner<K> partitioner, KeySelector
     }
 ```
 
-##### shuffle
+##### shuffle分区策略
+
+shuffle分区策略可以使用**随机函数**（Random算法）将上游算子并行实例发送的元素**随机**转发到下游算子的某一个并行实例中
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(3);
+
+        final String flag = "subtask name is ";
+        DataStream<Trade> inputStream = env.addSource(new RichSourceFunction<Trade>() {
+
+            @Override
+            public void run(SourceContext<Trade> ctx) {
+                List<Trade> list = new ArrayList<>();
+                list.add(new Trade("185XXX", 899, "2018"));//2
+                list.add(new Trade("155XXX", 1111, "2019"));//2
+                list.add(new Trade("155XXX", 1199, "2019"));//1
+                list.add(new Trade("185XXX", 899, "2018"));//2
+                list.add(new Trade("138XXX", 19, "2019"));//2
+                list.add(new Trade("138XXX", 399, "2020"));//2
+
+                for (Trade trade : list) {
+                    ctx.collect(trade);
+                }
+                String subtaskName = getRuntimeContext().getTaskNameWithSubtasks();
+                System.out.println("source operator " + flag + subtaskName);
+            }
+
+            @Override
+            public void cancel() {
+                System.out.println("调用cancel方法");
+            }
+        });
+
+        inputStream.map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " first map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        }).shuffle().map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " second map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        });
+
+        env.execute("Physical partitioning");
+    }
+```
+
+##### broadcast分区策略
+
+broadcast分区策略可以将上游算子并行实例发送的元素**广播**到下游算子的**每一个**并行实例中，即每个下游算子的并行实例都可以收到同一个元素
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(3);
+
+        final String flag = "subtask name is ";
+        DataStream<Trade> inputStream = env.addSource(new RichSourceFunction<Trade>() {
+
+            @Override
+            public void run(SourceContext<Trade> ctx) {
+                List<Trade> list = new ArrayList<>();
+                list.add(new Trade("185XXX", 899, "2018"));//2
+                list.add(new Trade("155XXX", 1111, "2019"));//2
+                list.add(new Trade("155XXX", 1199, "2019"));//1
+                list.add(new Trade("185XXX", 899, "2018"));//2
+                list.add(new Trade("138XXX", 19, "2019"));//2
+                list.add(new Trade("138XXX", 399, "2020"));//2
+
+                for (Trade trade : list) {
+                    ctx.collect(trade);
+                }
+                String subtaskName = getRuntimeContext().getTaskNameWithSubtasks();
+                System.out.println("source operator " + flag + subtaskName);
+            }
+
+            @Override
+            public void cancel() {
+                System.out.println("调用cancel方法");
+            }
+        });
+
+        inputStream.map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " first map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        }).broadcast().map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " second map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        });
+
+        env.execute("Physical partitioning");
+    }
+```
+
+##### rebalance分区策略
+
+rebalance分区策略可以将上游算子并行实例发送的元素**均匀地**发送到下游算子的并行实例中。它使用循环遍历下游算子并行实例的方式（round-robin）平均分配上游算子并行实例的元素，每个下游算子的并行实例具有相同的负载。当数据流中的数据存在数据倾斜时，该分区策略对性能有很大提升
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(3);
+
+        final String flag = "subtask name is ";
+        DataStream<Trade> inputStream = env.addSource(new RichSourceFunction<Trade>() {
+
+            @Override
+            public void run(SourceContext<Trade> ctx) {
+                List<Trade> list = new ArrayList<>();
+                list.add(new Trade("185XXX", 899, "2018"));
+                list.add(new Trade("155XXX", 1111, "2019"));
+                list.add(new Trade("155XXX", 1199, "2019"));
+                list.add(new Trade("185XXX", 899, "2018"));
+                list.add(new Trade("138XXX", 19, "2019"));
+                list.add(new Trade("138XXX", 399, "2020"));
+                list.add(new Trade("138XXX", 399, "2020"));
+                list.add(new Trade("138XXX", 399, "2020"));
+
+                for (Trade trade : list) {
+                    ctx.collect(trade);
+                }
+                String subtaskName = getRuntimeContext().getTaskNameWithSubtasks();
+                System.out.println("source operator " + flag + subtaskName);
+            }
+
+            @Override
+            public void cancel() {
+                System.out.println("调用cancel方法");
+            }
+        }).partitionCustom((key, numPartitions) -> {
+            if (key.contains("185")) {
+                return 0;
+            } else {
+                return 1;
+            }
+        }, Trade::getCardNum);
+
+        inputStream.map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " first map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        }).setParallelism(2)
+                .rebalance()
+                .map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " second map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        });
+
+        env.execute("Physical partitioning");
+    }
+```
+
+##### rescale分区策略
+
+rescale分区策略可以将上游算子并行实例发送的元素**均匀地**发送到下游算子的并行实例的**某个子集中**，rescale分区策略会**尽可能避免数据在网络间传输**，而能否避免在网络中传输上下游算子间的数据，具体还取决于其他配置，比如TaskManager的任务槽数，上下游算子的并行度。如果想平均分配上游算子并行实例中的元素以实现负载均衡，且不期望实现rebalance那样的全局负载均衡，则可以使用rescale分区策略
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(4);
+
+        final String flag = "subtask name is ";
+        DataStream<Trade> inputStream = env.addSource(new RichSourceFunction<Trade>() {
+
+            @Override
+            public void run(SourceContext<Trade> ctx) {
+                List<Trade> list = new ArrayList<>();
+                list.add(new Trade("185XXX", 899, "2018"));
+                list.add(new Trade("155XXX", 1111, "2019"));
+                list.add(new Trade("155XXX", 1199, "2019"));
+                list.add(new Trade("185XXX", 899, "2018"));
+                list.add(new Trade("138XXX", 19, "2019"));
+                list.add(new Trade("138XXX", 399, "2020"));
+                list.add(new Trade("138XXX", 399, "2020"));
+                list.add(new Trade("138XXX", 399, "2020"));
+
+                for (Trade trade : list) {
+                    ctx.collect(trade);
+                }
+                String subtaskName = getRuntimeContext().getTaskNameWithSubtasks();
+                System.out.println("source operator " + flag + subtaskName);
+            }
+
+            @Override
+            public void cancel() {
+                System.out.println("调用cancel方法");
+            }
+        }).partitionCustom((key, numPartitions) -> {
+            if (key.contains("185")) {
+                return 0;
+            } else {
+                return 1;
+            }
+        }, Trade::getCardNum);
+
+        inputStream.map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " first map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        }).setParallelism(2)
+                .rescale()
+                .map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " second map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        });
+
+        env.execute("Physical partitioning");
+    }
+```
+
+##### forward分区策略
+
+forward分区策略会将上游算子并行实例发送的元素尽可能地转发到和该实例在同一个TaskManager下的下游算子的并行实例中，**forward分区策略要求上下游算子的并行度相同，否则会报错**
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(3);
+
+        final String flag = "subtask name is ";
+        DataStream<Trade> inputStream = env.addSource(new RichSourceFunction<Trade>() {
+
+            @Override
+            public void run(SourceContext<Trade> ctx) {
+                List<Trade> list = new ArrayList<>();
+                list.add(new Trade("185XXX", 899, "2018"));//2
+                list.add(new Trade("155XXX", 1111, "2019"));//2
+                list.add(new Trade("155XXX", 1199, "2019"));//1
+                list.add(new Trade("185XXX", 899, "2018"));//2
+                list.add(new Trade("138XXX", 19, "2019"));//2
+                list.add(new Trade("138XXX", 399, "2020"));//2
+
+                for (Trade trade : list) {
+                    ctx.collect(trade);
+                }
+                String subtaskName = getRuntimeContext().getTaskNameWithSubtasks();
+                System.out.println("source operator " + flag + subtaskName);
+            }
+
+            @Override
+            public void cancel() {
+                System.out.println("调用cancel方法");
+            }
+        });
+
+        inputStream.map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " first map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        }).forward().map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " second map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        });
+
+        env.execute("Physical partitioning");
+    }
+```
+
+##### global分区策略
+
+global分区策略会将上游算子并行实例发送的元素**全部**发送给下游算子index为0的并行实例上
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(3);
+
+        final String flag = "subtask name is ";
+        DataStream<Trade> inputStream = env.addSource(new RichSourceFunction<Trade>() {
+
+            @Override
+            public void run(SourceContext<Trade> ctx) {
+                List<Trade> list = new ArrayList<>();
+                list.add(new Trade("185XXX", 899, "2018"));//2
+                list.add(new Trade("155XXX", 1111, "2019"));//2
+                list.add(new Trade("155XXX", 1199, "2019"));//1
+                list.add(new Trade("185XXX", 899, "2018"));//2
+                list.add(new Trade("138XXX", 19, "2019"));//2
+                list.add(new Trade("138XXX", 399, "2020"));//2
+
+                for (Trade trade : list) {
+                    ctx.collect(trade);
+                }
+                String subtaskName = getRuntimeContext().getTaskNameWithSubtasks();
+                System.out.println("source operator " + flag + subtaskName);
+            }
+
+            @Override
+            public void cancel() {
+                System.out.println("调用cancel方法");
+            }
+        });
+
+        inputStream.map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " first map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        }).global().map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " second map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        });
+
+        env.execute("Physical partitioning");
+    }
+```
+
+
 
 #### 分布式缓存
 
