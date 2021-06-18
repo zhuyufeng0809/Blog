@@ -464,7 +464,7 @@ curl https://flink.apache.org/q/quickstart.sh | bash
 
 ### Lambda与泛型
 
-以lambda表达式的形式使用flink算子，如果算子的泛型中再嵌套泛型，会使flink无法推断出被嵌套的泛型类型。需要开发者在lambda表达式后再调用return方法来添加此算子的类型信息提示
+以lambda表达式的形式使用flink算子，如果算子的泛型中再嵌套泛型，会使flink无法推断出被嵌套的泛型类型。需要开发者在lambda表达式后再调用return方法来添加此算子的类型信息提示，且在lambda表达式前显示声明类型
 
 ```java
 public class lambda {
@@ -1282,4 +1282,97 @@ Iterate算子由两个方法组成：
         env.execute("RichFunctionTemplate");
     }
 ```
+
+#### 物理分区
+
+数据流中的元素从上一个算子传递给下一个算子时，上游算子发送的元素被分配给下游算子的哪些**并行实例**（**物理分区**），由分区策略决定。**默认情况下，Flink会将上游算子并行实例发送的元素尽可能地转发到和该实例在同一个TaskManager下的下游算子的并行实例中**
+
+##### 自定义分区策略
+
+实现自定义分区策略需要实现org.apache.flink.api.common.functions.Partitioner接口的partition方法
+
+```java
+int partition(K key, int numPartitions);
+```
+
+参数key用来计算元素发往哪个分区（并行实例），**参数numPartitions为下游算子分区（并行实例）的总数量（numPartitions不能大于并行度，否则会报错！！）**。**分区的数值从0开始，返回值的范围只能是从0到numPartitions -1之间**
+
+调用算子的partitionCustom()方法指定元素发往下游算子的哪一个分区，Flink提供了三个重载的partitionCustom()方法
+
+```java
+public <K> DataStream<T> partitionCustom(Partitioner<K> partitioner, int field)
+public <K> DataStream<T> partitionCustom(Partitioner<K> partitioner, String field)
+public <K> DataStream<T> partitionCustom(Partitioner<K> partitioner, KeySelector<T, K> keySelector)
+```
+
+参数partitioner为实现org.apache.flink.api.common.functions.Partitioner接口的类，根据指定分区键方式的不同区分三种不同的重载方法，与KeyBy算子指定键的方式类似
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(3);
+
+        final String flag = "subtask name is ";
+        DataStream<Trade> inputStream = env.addSource(new RichSourceFunction<Trade>() {
+
+            @Override
+            public void run(SourceContext<Trade> ctx) {
+                List<Trade> list = new ArrayList<>();
+                list.add(new Trade("185XXX", 899, "2018"));//2
+                list.add(new Trade("155XXX", 1111, "2019"));//2
+                list.add(new Trade("155XXX", 1199, "2019"));//1
+                list.add(new Trade("185XXX", 899, "2018"));//2
+                list.add(new Trade("138XXX", 19, "2019"));//2
+                list.add(new Trade("138XXX", 399, "2020"));//2
+
+                for (Trade trade : list) {
+                    ctx.collect(trade);
+                }
+                String subtaskName = getRuntimeContext().getTaskNameWithSubtasks();
+                System.out.println("source operator " + flag + subtaskName);
+            }
+
+            @Override
+            public void cancel() {
+                System.out.println("调用cancel方法");
+            }
+        });
+
+        inputStream.map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " first map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        }).partitionCustom((key, numPartitions) -> {
+            if (key.getCardNum().contains("185") && key.getTrade() > 1000) {
+                return 0;
+            } else if (key.getCardNum().contains("155") && key.getTrade() > 1150) {
+                return 1;
+            } else {
+                return 2;
+            }
+        }, value -> value).map(new RichMapFunction<Trade, Trade>() {
+            @Override
+            public Trade map(Trade value) {
+                RuntimeContext context = getRuntimeContext();
+                String subtaskName = context.getTaskNameWithSubtasks();
+                int subtaskIndexOf = context.getIndexOfThisSubtask();
+                System.out.println(value + " second map operator " + flag + subtaskName + " index:" + subtaskIndexOf);
+                return value;
+            }
+        });
+
+        env.execute("Physical partitioning");
+    }
+```
+
+##### shuffle
+
+#### 分布式缓存
+
+### Flink CDC
 
