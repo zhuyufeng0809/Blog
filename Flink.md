@@ -1287,6 +1287,8 @@ Iterate算子由两个方法组成：
 
 数据流中的元素从上一个算子传递给下一个算子时，上游算子发送的元素被分配给下游算子的哪些**并行实例**（**物理分区**），由分区策略决定。**默认情况下，Flink会将上游算子并行实例发送的元素尽可能地转发到和该实例在同一个TaskManager下的下游算子的并行实例中**
 
+https://www.jianshu.com/p/9e9c087bafc1
+
 ##### 自定义分区策略
 
 实现自定义分区策略需要实现org.apache.flink.api.common.functions.Partitioner接口的partition方法
