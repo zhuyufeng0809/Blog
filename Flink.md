@@ -16,6 +16,14 @@ flink集群由两种类型进程组成
 
 Flink Client
 
+客户端负责将一个Flink作业提交到Flink集群的JobManager中，具体将提交的Flink作业转换为JobGraph，并将其发送到Flink集群的JobManager中
+
+* Flink命令行
+* Scala Shell
+* SQL Client
+* Restful API
+* Web UI
+
 ### Flink分布式执行模型
 
 Flink程序本质是并行和分布式的
@@ -1746,9 +1754,92 @@ global分区策略会将上游算子并行实例发送的元素**全部**发送�
     }
 ```
 
-
-
 #### 分布式缓存
+
+Flink提供了类似Hadoop的分布式缓存功能，允许文件在本地被算子的并行实例访问。分布式缓存一般用于共享包含静态外部数据的文件，例如数据字典，配置文件，或者机器学习的模型等
+
+使用分布式缓存，首先要将本地（通过JobManager的BLOB服务进行分发）或者远程文件系统（HDFS）的指定文件/目录注册为缓存文件。JobManager会自动将注册的文件/目录复制到所有执行该程序的TaskManager所在的服务器下，默认路径为/tmp。在程序运行时，算子的并行实例会查找指定目录下的文件/目录
+
+JobManager在启动时会实例化一个BLOB（二进制大型对象）服务，并将其绑定到可用的端口上。当Flink的客户端将本地文件注册为分布式缓存文件时，该文件会发送到BLOB服务，然后存储在BLOB服务的存储路径下的对应文件夹中
+
+```java
+public void registerCachedFile(String filePath, String name)
+```
+
+获取分布式缓存文件需要运行环境的上下文对象，所以算子需要以实现富函数的方式定义
+
+```java
+getRuntimeContext().getDistributedCache().getFile("localFile")
+```
+
+**分布式缓存文件的内容被算子的并行实例访问一次后就应该保存在并行实例的内部缓存中，否则并行实例每接收一个元素就要访问一次分布式缓存文件，会大幅降低性能。所以应该重写富函数的open()方法，在open()方法中实现对分布式缓存文件地访问，并将数据存储在并行实例的内部缓存（某个成员变量）中**
+
+```java
+    public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        String cacheUrl = "/Users/zhuyufeng/IdeaProjects/LearnFlink/src/main/resources/TextFileSource.txt";
+        env.setParallelism(3);
+        env.registerCachedFile(cacheUrl, "localFile");
+
+        DataStream<Long> input = env.generateSequence(1, 20);
+
+        input.map(new RichMapFunction<Long, String>() {
+            private String cacheStr;
+
+            @Override
+            public void open(Configuration config) {
+                File myFile = getRuntimeContext().getDistributedCache().getFile("localFile");
+                cacheStr = readFile(myFile);
+            }
+
+            @Override
+            public String map(Long value) throws Exception {
+                Thread.sleep(6000);
+                return StringUtils.join(value, "---", cacheStr);
+            }
+
+            public String readFile(File myFile) {
+                System.out.println("fuck fuck fuck" + myFile.getPath());
+                BufferedReader reader = null;
+                StringBuilder sbf = new StringBuilder();
+                try {
+                    reader = new BufferedReader(new FileReader(myFile));
+                    String tempStr;
+                    while ((tempStr = reader.readLine()) != null) {
+                        sbf.append(tempStr);
+                    }
+                    reader.close();
+                    return sbf.toString();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } finally {
+                    if (reader != null) {
+                        try {
+                            reader.close();
+                        } catch (IOException e1) {
+                            e1.printStackTrace();
+                        }
+                    }
+                }
+                return sbf.toString();
+            }
+        }).print();
+
+        env.execute();
+    }
+```
+
+**注意事项：如果分布式缓存文件的路径为本地文件系统，那么提交作业的客户端必须和指定的本地文件在同一台服务器中**
+
+#### 算子参数传递
+
+将参数传递到算子所有并行实例中
+
+##### 通过构造函数
+
+
 
 ### Flink CDC
 
