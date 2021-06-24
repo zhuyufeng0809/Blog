@@ -1866,6 +1866,146 @@ FLink的所有算子上都可以使用托管状态，原始状态只能在开发
 
 ##### 托管的Keyed状态
 
+Flink提供了5种类型不同的托管的Keyed状态结构，状态结构仅用于与状态进行交互，状态不一定存储在FLink程序内部，可能驻留在磁盘或其他分布式文件系统中。Flink程序只是持有了这个状态的句柄
+
+为了得到一个状态的句柄，必须创建状态对应的StateDescriptor，它保存了状态的名称（可以创建多个状态，只要具有唯一的名称，便可以在算子中引用它们）、状态所保存的值的类型，以及指定的算子
+
+获取状态结构需要运行环境的上下文对象，所以算子需要通过富函数实现。与分布式缓存同理，状态结构的初始化需要在open()函数中实现
+
+* ValueState<T>：该状态结构为单个值，可以更新和检索
+
+```java
+    public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        env.setParallelism(2);
+
+        DataStream<Tuple2<Integer, Integer>> inputStream = env.addSource(new RichSourceFunction<Tuple2<Integer, Integer>>() {
+
+            private static final long serialVersionUID = 1L;
+
+            private int counter = 0;
+
+            @Override
+            public void run(SourceContext<Tuple2<Integer, Integer>> ctx) throws Exception {
+                while (true) {
+                    ctx.collect(new Tuple2<>(counter % 5, counter));
+                    System.out.println("send data :" + counter % 5 + "," + counter);
+                    counter++;
+                    Thread.sleep(1000);
+                }
+            }
+
+            @Override
+            public void cancel() {
+            }
+        });
+
+        KeyedStream<Tuple2<Integer, Integer>, Tuple> keyedStream = inputStream.keyBy(0);
+
+        keyedStream.flatMap(new RichFlatMapFunction<Tuple2<Integer, Integer>, Tuple2<Integer, Integer>>() {
+
+            public transient ValueState<Tuple2<Integer, Integer>> valueState;
+
+            @Override
+            public void open(Configuration config) {
+                ValueStateDescriptor<Tuple2<Integer, Integer>> descriptor =
+                        new ValueStateDescriptor<>(
+                                "ValueStateFlatMap",
+                                TypeInformation.of(new TypeHint<Tuple2<Integer, Integer>>() {
+                                }));
+                valueState = getRuntimeContext().getState(descriptor);
+            }
+
+            @Override
+            public void flatMap(Tuple2<Integer, Integer> input, Collector<Tuple2<Integer, Integer>> out) throws Exception {
+                Tuple2<Integer, Integer> currentSum = valueState.value();
+                if (currentSum == null) {
+                    currentSum = input;
+                } else {
+                    currentSum.f1 = currentSum.f1 + input.f1;
+                    currentSum.f0 = currentSum.f0 + input.f0;
+                }
+                out.collect(input);
+                valueState.update(currentSum);
+                System.out.println(Thread.currentThread().getName() + " currentSum after:" + valueState.value() + ",input :" + input);
+            }
+
+        });
+
+        env.execute("Intsmaze ValueStateFlatMap");
+    }
+```
+
+* ListState<T>：该状态结构为一个值列表，可以向列表中追加元素并可迭代列表
+
+```java
+    public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        env.setParallelism(2);
+
+        DataStream<Tuple2<Integer, Integer>> inputStream = env.addSource(new RichSourceFunction<Tuple2<Integer, Integer>>() {
+
+            private static final long serialVersionUID = 1L;
+
+            private int counter = 0;
+
+            @Override
+            public void run(SourceContext<Tuple2<Integer, Integer>> ctx) throws Exception {
+                while (true) {
+                    ctx.collect(new Tuple2<>(counter % 5, counter));
+                    System.out.println("send data :" + counter % 5 + "," + counter);
+                    counter++;
+                    Thread.sleep(1000);
+                }
+            }
+
+            @Override
+            public void cancel() {
+            }
+        });
+
+        KeyedStream<Tuple2<Integer, Integer>, Tuple> keyedStream = inputStream.keyBy(0);
+
+        keyedStream.flatMap(new RichFlatMapFunction<Tuple2<Integer, Integer>, String>() {
+
+            public transient ListState<Tuple2<Integer, Integer>> listState;
+
+            @Override
+            public void open(Configuration config) {
+                ListStateDescriptor<Tuple2<Integer, Integer>> descriptor =
+                        new ListStateDescriptor<>(
+                                "ListStateFlatMap",
+                                TypeInformation.of(new TypeHint<Tuple2<Integer, Integer>>() {
+                                }));
+                listState = getRuntimeContext().getListState(descriptor);
+            }
+
+            @Override
+            public void flatMap(Tuple2<Integer, Integer> input, Collector<String> out) throws Exception {
+                listState.add(input);
+                Iterator<Tuple2<Integer, Integer>> iterator = listState.get().iterator();
+                int number = 0;
+                StringBuilder strBuffer = new StringBuilder();
+                while (iterator.hasNext()) {
+                    strBuffer.append(":").append(iterator.next());
+                    number++;
+                    if (number == 3) {
+                        listState.clear();
+                        out.collect(strBuffer.toString());
+                    }
+                }
+            }
+
+        }).print();
+
+        env.execute("Intsmaze ValueStateFlatMap");
+    }
+```
+
 
 
 ### Flink CDC
