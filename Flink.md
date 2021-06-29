@@ -2072,6 +2072,198 @@ Flink提供了5种类型不同的托管的Keyed状态结构，状态结构仅用
 
 ##### 托管的Operator状态
 
+使用托管的Operator状态，需要算子实现CheckpointedFunction接口或者ListCheckpointed接口。**目前托管的Operator状态只支持ListState类型的状态结构**，且**ListState中的元素要实现序列化接口**，CheckpointedFunction接口已被标为deprecation，推荐使用ListCheckpointed接口
+
+* CheckpointedFunction
+
+  * void snapshotState(FunctionSnapshotContext context) throws Exception：每当请求对状态的快照执行检查点操作时，会自动调用snapshotState方法。参数FunctionSnapshotContext为当前算子的上下文对象
+
+  * void initializeState(FunctionInitializationContext context) throws Exception：在执行期间**创建算子实例**或者**算子从检查点恢复**时调用。参数FunctionInitializationContext为当前算子初始化的上下文对象。该方法用于初始化算子的状态结构。**可以通过FunctionInitializationContext的isRestored()方法判断算子是处于初始化状态还是从失败恢复的状态，因此initializeState不仅是初始化状态的地方，还是状态恢复的地方**
+
+    当更改了具有Operator状态算子的并行度时，Operator状态的数据可以从算子并行实例之间重新分配数据，Flink提供了两种重新分配状态数据的当时
+
+    * Even-Split：有状态算子的每个并行实例返回一个状态元素列表，整个状态在逻辑上是所有列表的连接。在作业恢复时对状态进行重新分配，**新的状态会被平均地划分为尽可能多的并行实例的子列表**。每个并行实例获取一个子列表，该子列表可以为空，也可以包含一个或多个元素
+    * Union：有状态算子的每个并行实例返回一个状态元素列表，整个状态在逻辑上是所有列表的连接。在作业恢复时对状态进行重新分配，**有状态算子的每个并行实例都获得状态元素的完整列表**
+
+    ```java
+        public interface CheckpointMap extends MapFunction<Long, String>,
+                CheckpointedFunction{}
+    
+        public static void main(String[] args) throws Exception {
+    
+            StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+            env.enableCheckpointing(10000);
+            env.setParallelism(1);
+    
+            String path = "file:///Users/zhuyufeng/IdeaProjects/LearnFlink/src/main/resources/";
+            FsStateBackend stateBackend = new FsStateBackend(path);
+            env.setStateBackend(stateBackend);
+            env.setRestartStrategy(RestartStrategies.failureRateRestart(
+                    3,
+                    Time.of(5, TimeUnit.MINUTES),
+                    Time.of(10, TimeUnit.SECONDS)
+            ));
+    
+            DataStream<Long> streamSource = env.addSource(new RichSourceFunction<Long>() {
+                private static final long serialVersionUID = 1L;
+    
+                @Override
+                public void open(Configuration parameters) throws Exception {
+                    Thread.sleep(10000);
+                }
+    
+                @Override
+                public void run(SourceContext<Long> ctx) throws Exception {
+                    long offset = 0L;
+                    while (true) {
+                        ctx.collect(offset);
+                        offset += 1;
+                        Thread.sleep(1000);
+                    }
+                }
+    
+                @Override
+                public void cancel() {
+                }
+            }).setParallelism(1);
+    
+            DataStream<String> mapResult = streamSource
+                    .map(new CheckpointMap() {
+                        private transient ListState<Long> checkpointedState;
+    
+                        private final LinkedList<Long> bufferedElements = new LinkedList<>();
+    
+                        @Override
+                        public String map(Long value) {
+                            if (value == 30) {
+                                int t = 1 / 0;
+                            }
+    
+                            int size = bufferedElements.size();
+                            if (size >= 10) {
+                                for (int i = 0; i < size - 9; i++) {
+                                    bufferedElements.poll();
+                                }
+                            }
+    
+                            String threadName = Thread.currentThread().getName();
+                            bufferedElements.add(value);
+    
+                            return " 集合中第一个元素是:" + bufferedElements.getFirst() +
+                                    " 集合中最后一个元素是:" + bufferedElements.getLast() +
+                                    " length is :" + bufferedElements.size();
+                        }
+    
+                        @Override
+                        public void snapshotState(FunctionSnapshotContext context) throws Exception {
+                            checkpointedState.clear();
+                            checkpointedState.addAll(bufferedElements);
+                        }
+    
+                        @Override
+                        public void initializeState(FunctionInitializationContext context) throws Exception {
+                            ListStateDescriptor<Long> descriptor =
+                                    new ListStateDescriptor<>(
+                                            "CheckpointedFunctionTemplate-ListState",
+                                            TypeInformation.of(new TypeHint<Long>() {
+                                            }));
+    //                        checkpointedState = context.getOperatorStateStore().getUnionListState(descriptor);
+                            checkpointedState = context.getOperatorStateStore().getListState(descriptor);
+                            if (context.isRestored()) {
+                                for (Long element : checkpointedState.get()) {
+                                    bufferedElements.offer(element);
+                                }
+                            }
+                        }
+                    });
+            mapResult.print("输出结果");
+            env.execute("Intsmaze CheckpointedFunctionTemplate");
+        }
+    ```
+
+* ListCheckpointed：ListCheckpointed在作业恢复时使用Even-Split方式分配状态内的数据，如果状态的类型为自定义的JavaBean类型，则JavaBean必须实现Serializable接口
+
+  * List<T> snapshotState(long checkpointId, long timestamp) throws Exception：每当执行检查点操作对当前状态进行快照时，会自动调用snapshotState方法。**此方法返回的容器保存着放入ListState的数据，换句话说，通过此方法返回要存入ListState的数据，Flink会自动将返回容器中的数据填充到ListState中**，返回的容器可以为null或者为空，也可以包含一个或者多个元素。参数timestamp为JobManager触发对状态的快照进行检查点操作时的时间戳，参数checkpointId当前进行检查点操作的ID
+  * void restoreState(List<T> state) throws Exception：此方法在**创建算子实例**或者**从检查点恢复时**调用。**参数state为容纳ListState状态数据的容器，换句话说，算子的ListState状态数据会自动填充到state容器中，并作为参数传递给方法**
+
+  ```java
+      private interface ListCheckpointMap extends MapFunction<Long, String>,
+              ListCheckpointed<Long>{}
+  
+      public static void main(String[] args) throws Exception {
+          StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+          env.enableCheckpointing(10000);
+          env.setParallelism(1);
+          String path = "file:///Users/zhuyufeng/IdeaProjects/LearnFlink/src/main/resources/";
+          FsStateBackend stateBackend = new FsStateBackend(path);
+          env.setStateBackend(stateBackend);
+          env.setRestartStrategy(RestartStrategies.failureRateRestart(
+                  3,
+                  Time.of(5, TimeUnit.MINUTES),
+                  Time.of(10, TimeUnit.SECONDS)
+          ));
+  
+          env.addSource(new RichSourceFunction<Long>() {
+              private static final long serialVersionUID = 1L;
+  
+              @Override
+              public void open(Configuration parameters) throws Exception {
+                  Thread.sleep(10000);
+              }
+  
+              @Override
+              public void run(SourceContext<Long> ctx) throws Exception {
+                  long offset = 0L;
+                  while (true) {
+                      ctx.collect(offset);
+                      offset += 1;
+                      Thread.sleep(1000);
+                  }
+              }
+  
+              @Override
+              public void cancel() {
+              }
+          }).setParallelism(1)
+                  .map(new ListCheckpointMap() {
+                      private List<Long> bufferedElements = new LinkedList<>();
+  
+                      @Override
+                      public List<Long> snapshotState(long checkpointId, long timestamp) {
+                          return bufferedElements;
+                      }
+  
+                      @Override
+                      public void restoreState(List<Long> state) {
+                          bufferedElements = state;
+                      }
+  
+                      @Override
+                      public String map(Long value) {
+                          if (value == 30) {
+                              int i = 1 / 0;
+                          }
+  
+                          int size = bufferedElements.size();
+                          if (size >= 10) {
+                              for (int i = 0; i < size - 9; i++) {
+                                  Long poll = bufferedElements.remove(0);
+                              }
+                          }
+                          bufferedElements.add(value);
+  
+                          return "集合中第一个元素是:" + bufferedElements.get(0) +
+                                  " 集合中最后一个元素是:" + bufferedElements.get(bufferedElements.size() - 1) +
+                                  " length is :" + bufferedElements.size();
+                      }
+                  }).print("输出结果");
+  
+          env.execute("Intsmaze CheckpointedFunctionTemplate");
+      }
+  ```
+
+  
+
 
 
 ### Flink CDC
