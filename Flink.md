@@ -299,7 +299,7 @@ env.disableOperatorChaining();
 
 每个任务槽都表示TaskManager的一个固定的资源子集，Flink将TaskManager的内存划分到多个任务槽中（每个子任务运行在一个任务槽中）。划分内存意味着在任务槽中运行的子任务不会相互竞争内存。任务槽并没有隔离CPU，目前只能隔离内存
 
-任务槽是静态的概念，指的是TaskManager最多能同时并发执行的任务数量，可以在$FLINK_HOME/flink-conf.xml文件中修改taskmanager.numberOfTaskSlots参数进行配置。算子的并行度是动态的概念，指的是在TaskManager中运行一个算子实际使用的任务槽数，可以在$FLINK_HOME/flink-conf.xml文件中修改parallelism.default参数去配置Flink程序默认的并行度
+任务槽是静态的概念，指的是TaskManager最多能同时并发执行的任务数量，可以在$FLINK_HOME/conf/flink-conf.xml文件中修改taskmanager.numberOfTaskSlots参数进行配置。算子的并行度是动态的概念，指的是在TaskManager中运行一个算子实际使用的任务槽数，可以在$FLINK_HOME/conf/flink-conf.xml文件中修改parallelism.default参数去配置Flink程序默认的并行度
 
 #### 共享任务槽
 
@@ -2262,7 +2262,42 @@ Flink提供了5种类型不同的托管的Keyed状态结构，状态结构仅用
       }
   ```
 
-  
+#### 检查点机制
+
+Flink中的每个算子都可以是有状态的，有状态的算子在处理过程中会存储计算的中间结果数据。当具有有状态算子的作业失败后重新启动时，有状态算子中存储的状态数据就会丢失。为了使有状态算子具有容错特性，Flink需要定期对状态的快照进行检查点操作以将状态数据持久化存储。当作业重启时可以从检查点中的数据恢复，让作业具有和无故障执行相同的效果
+
+##### 先决条件
+
+要保证Flink的有状态算子可以和检查点机制的持久存储交互，需要满足两个前提
+
+* 可以在一定时间内重发记录的持久数据源（Kafka、HDFS等）
+* 状态的持久存储系统，通常是分布式文件系统
+
+##### 启用检查点
+
+默认情况下检查点机制是禁用的。启用检查点机制需要调用StreamExecutionEnvironment的enableCheckpointing方法
+
+```java
+public StreamExecutionEnvironment enableCheckpointing(long interval)
+```
+
+参数interval为以毫秒为单位执行检查点操作的间隔，代表每隔interval毫秒执行一次检查点操作
+
+##### 配置检查点
+
+调用StreamExecutionEnvironment的getCheckpointConfig方法得到CheckpointConfig对象
+
+```java
+public CheckpointConfig getCheckpointConfig()
+```
+
+通过CheckpointConfig对象配置检查点的细粒度参数，除此之外，还可以在$FLINK_HOME/conf/flink-conf.xml配置文件中配置更多的参数
+
+##### 目录结构
+
+检查点由元数据文件组成，根据所选的状态后端，还包括一些额外的数据文件。可以在$FLINK_HOME/conf/flink-conf.xml配置文件中通过state.checkpoints.dir参数**全局**配置元数据文件和数据文件指定存储的目录，也可以在每个作业中指定特定的目录
+
+#### 状态后端
 
 
 
