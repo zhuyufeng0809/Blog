@@ -2299,7 +2299,15 @@ public CheckpointConfig getCheckpointConfig()
 
 #### 状态后端
 
+当检查点被激活后，每次检查点操作都会将状态的快照持久化存储来防止失败而导致的状态数据丢失。**状态在内部如何表示，以及在检查点上如何持久保存，取决于所选的状态后端**
 
+状态后端配置了基本的目录结构，将特定检查点的数据保留在特定子目录中。状态后端将会为每一个激活检查点机制的作业创建一个带有作业ID的子目录，比如/Users/zhuyufeng/IdeaProjects/LearnFlink/src/main/resources/3ffd3202ab63449c19a8ed264ad75cc9，该子目录包含实际的检查点数据，每个检查点单独将其所有文件存储在包含检查点编号的子目录中，比如/Users/zhuyufeng/IdeaProjects/LearnFlink/src/main/resources/3ffd3202ab63449c19a8ed264ad75cc9/chk-5
+
+检查点操作执行**完成后**会将该检查点的元数据写入名为_metadata的文件
+
+FLink提供三种可用的状态后端
+
+##### 
 
 ### Flink CDC
 
