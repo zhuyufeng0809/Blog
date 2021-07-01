@@ -2307,7 +2307,40 @@ public CheckpointConfig getCheckpointConfig()
 
 FLink提供三种可用的状态后端
 
-##### 
+##### MemoryStateBackend
+
+如果没有为作业配置状态后端，那么默认使用MemoryStateBackend作为作业的状态后端。MemoryStateBackend状态后端将作业的状态数据保存在**TaskManager的JVM堆内存中**。为了防止作业状态数据丢失，检查点操作会将存储在TaskManager内存中的状态数据作为检查点确认消息的一部分发送给JobManager，也就是说**状态数据存储在JobManager的JVM堆内存中**
+
+##### FsStateBackend
+
+FsStateBackend状态后端将作业的状态数据保存在**TaskManager的JVM堆内存中**。为了防止作业状态数据丢失，检查点操作将对TaskManager内存中的状态数据进行快照，并将该快照持久化保存在指定文件系统的路径下，即**状态数据存储在文件系统中**，同时会将极少的元数据存储在JobManager内存中
+
+##### RocksDBStateBackend
+
+RocksDBStateBackend状态后端将作业的状态数据保存在RocksDB数据库中（一种嵌入式本地数据库），**默认情况下该数据库中的数据存储在TaskManager的数据目录中，实际上是采用内存+磁盘的方法进行存储的，因此该状态后端可以存储非常大的状态，并溢出到磁盘中**。为了防止作业状态数据丢失，检查点操作将对RocksDB数据库中的状态进行快照，并将该快照持久化保存在指定文件系统的路径下
+
+如果想在作业中使用RocksDBStateBackend状态后端API，则需要在pom.xml文件中添加RocksDBStateBackend依赖项 
+
+##### 配置状态后端
+
+默认的状态后端是MemoryStateBackend。Flink支持两种方式配置状态后端
+
+* 设置单个作业的状态后端
+
+  ```java
+  StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+  env.setStateBackend(new FsStateBackend(path));
+  ```
+
+* 设置所有作业默认的状态后端
+
+  在$FLINK_HOME/conf/flink-conf.xml配置文件中通过state.backend和state.checkpoints.dir配置默认的状态后端，该配置会对**所有**作业生效
+
+如果在作业中配置了状态后端，则会覆盖在配置文件中配置的状态后端，否则会使用配置文件中的配置的状态后端
+
+#### 保存点机制
+
+
 
 ### Flink CDC
 
