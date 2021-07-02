@@ -408,7 +408,7 @@ cp /opt/hadoop/share/hadoop/yarn/*.jar /opt/flink/lib
 cp /opt/hadoop/share/hadoop/common/lib/*.jar /opt/flink/lib
 ```
 
-2. 删除flink/lib目录下commons-cli-1.*.jar包
+2. 删除flink/lib目录下commons-cli-1.*.jar包和slf4j-log4j12-1.7.15.jar包
 
 原因见https://blog.csdn.net/appleyuchi/article/details/106730381
 
@@ -2339,6 +2339,138 @@ RocksDBStateBackend状态后端将作业的状态数据保存在RocksDB数据库
 如果在作业中配置了状态后端，则会覆盖在配置文件中配置的状态后端，否则会使用配置文件中的配置的状态后端
 
 #### 保存点机制
+
+保存点是作业执行时状态的一致性镜像，它是通过FLink的检查点机制创建的，与检查点不同的是，保存点可以用来**停止、恢复和更新作业**
+
+保存点由两部分组成：大型二进制文件和一个相对较小的元数据文件。保存点的元数据文件以绝对路径的形式包含指向稳定存储中属于保存点所有文件的指针
+
+检查点和保存点的使用场景主要有如下不同：
+
+* **检查点的主要作用是在作业意外失败后重新启动时提供快速的状态恢复机制**。检查点的生命周期由Flink管理，也就是说检查点是由FLink自动创建、拥有和发布的，不需要与开发者进行交互，当作业终止后（停止在集群上运行），该作业的检查点就无法再提供状态恢复机制
+* **保存点用于手动备份和恢复作业**。例如作业的版本更新、更改作业的DAG图、更改代码的业务逻辑等。保存点由开发者手动创建、拥有和删除，因此保存点必须在作业终止后仍然存在
+
+##### 分配操作符id
+
+虽然检查点和保存点使用场景不同，但在当前版本的Flink中检查点和保存点的实现基本上都使用相同的代码，唯一不同是保存点需要在每个有状态算子上调用uid方法来手动指定该算子的id，这些id用于限定每个算子的状态。需要注意的是，每个算子设置的id必须唯一，否则作业的发布将失败。如果不手动指定每个算子的id，则它们将随机生成，只要这些id不变，作业就可以从保存点自动恢复。保存点可以理解成为每个有状态算子（**无状态算子不是保存点的一部分**）保存一个<id,state>的映射
+
+##### 保存点操作
+
+当为作业的算子分配id后，就可以使用Flink命令行客户端进行触发保存点、取消带有保存点的作业、作业从保存点恢复并处理保存点的操作
+
+https://blog.csdn.net/lvwenyuan_1/article/details/94435388
+
+```java
+    private interface ListCheckpointMap extends MapFunction<Long, String>,
+            ListCheckpointed<Long> {}
+
+    public static void main(String[] args) throws Exception {
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        env.enableCheckpointing(20000);
+
+        String path = "file:///Users/zhuyufeng/IdeaProjects/LearnFlink/src/main/resources";
+        StateBackend stateBackend = new RocksDBStateBackend(path);
+        env.setStateBackend(stateBackend);
+
+        DataStream<Long> sourceStream = env.addSource(new RichSourceFunction<Long>() {
+                    private static final long serialVersionUID = 1L;
+
+                    @Override
+                    public void open(Configuration parameters) throws Exception {
+                        Thread.sleep(10000);
+                    }
+
+                    @Override
+                    public void run(SourceContext<Long> ctx) throws Exception {
+                        long offset = 0L;
+                        while (true) {
+                            ctx.collect(offset);
+                            offset += 1;
+                            Thread.sleep(1000);
+                        }
+                    }
+
+                    @Override
+                    public void cancel() {
+                    }
+                }).setParallelism(1);
+
+        sourceStream.map(new ListCheckpointMap() {
+            private List<Long> bufferedElements = new LinkedList<>();
+
+            @Override
+            public List<Long> snapshotState(long checkpointId, long timestamp) {
+                return bufferedElements;
+            }
+
+            @Override
+            public void restoreState(List<Long> state) {
+                bufferedElements = state;
+            }
+
+            @Override
+            public String map(Long value) {
+
+                int size = bufferedElements.size();
+                if (size >= 10) {
+                    for (int i = 0; i < size - 9; i++) {
+                        bufferedElements.remove(0);
+                    }
+                }
+                bufferedElements.add(value);
+
+                return "集合中第一个元素是:" + bufferedElements.get(0) +
+                        " 集合中最后一个元素是:" + bufferedElements.get(bufferedElements.size() - 1) +
+                        " length is :" + bufferedElements.size();
+            }
+        }).uid("map-id").print();
+
+        env.execute("Intsmaze SavePointedTemplate");
+    }
+```
+
+1. 触发保存点操作
+
+   当触发作业的保存点操作时，Flink会创建一个新的保存点目录，其中存储数据和元数据，可以修改配置文件的配置或者执行命令时指定目录
+
+   ```shell
+   flink savepoint 7b21d7ed13a29c363c7626e6f4607e78 /Users/zhuyufeng/Desktop
+   //取决于Flink作业的部署模式
+   flink savepoint 7b21d7ed13a29c363c7626e6f4607e78 -yid application_1625210509488_0003 /Users/zhuyufeng/Desktop
+   ```
+
+   通过Flink命令行触发保存点操作不会取消正在运行的作业。如果没有指定目录，则使用$FLINK_HOME/conf/flink-conf.xml配置文件中配置的路径
+
+2. 从保存点恢复作业
+
+   将作业从保存点恢复有FLink命令行和Web UI两种
+
+   ```shell
+   flink run -s /Users/zhuyufeng/Desktop/savepoint-7b21d7-0f2d4efe0667 -m yarn-cluster /Users/zhuyufeng/IdeaProjects/LearnFlink/target/LearnFlink-1.0-SNAPSHOT.jar
+   ```
+
+3. 允许存在Non-Restored状态
+
+   默认情况下，Flink尝试将保存点中的所有状态与提交的作业中有状态算子进行匹配，如果作业从保存点还原，该保存点包含已删除算子的状态，则作业将无法恢复并执行，默认需要确保所有状态数据都要对应一个算子。如果希望允许跳过无法通过新作业恢复的保存点状态，那么可以设置allowNonRestoredState标志来允许存在非还原的状态，对于Flink命令行，只需要加上-n标识即可
+
+   ```shell
+   flink run -s /Users/zhuyufeng/Desktop/savepoint-7b21d7-0f2d4efe0667 -n -m yarn-cluster /Users/zhuyufeng/IdeaProjects/LearnFlink/target/LearnFlink-1.0-SNAPSHOT.jar
+   ```
+
+4. 触发保存点操作并取消作业
+
+   正常来说，触发保存点操作后下一步操作应该是停止作业的运行，以便发布新作业。如果触发保存点操作后，作业仍在运行，则从保存点恢复后会出现消息重复处理的情况。Flink为此提供了一套命令在触发保存点操作后取消作业的运行
+
+   ```shell
+   flink cancel -s /Users/zhuyufeng/Desktop 11ece526d9a3c1ccb388fac58d72f6a2 -yid application_1625210509488_0006
+   ```
+
+##### 保存点配置
+
+Flink提供了在$FLINK_HOME/conf/flink-conf.xml配置文件中通过state.savepoints.dir参数配置保存点的默认目录。在执行保存点命令时指定目标目录会覆盖默认的目标目录。如果既没有配置默认目录，又没有在执行保存点命令时指定，则保存点操作会失败
+
+#### 广播状态
 
 
 
