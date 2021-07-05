@@ -2472,6 +2472,128 @@ Flink提供了在$FLINK_HOME/conf/flink-conf.xml配置文件中通过state.savep
 
 #### 广播状态
 
+除了普通的状态，Flink还提供了另一种状态即广播状态，引入广播状态的目的是为了支持来自一个数据流的数据有时需要广播到下游算子的所有并行实例的业务场景。例如广播状态可以作为一种模式匹配出现，使用数据流中的元素对来自另一个数据流中的所有元素进行校验
+
+广播状态与将参数传递给算子的区别在于，将参数传递给算子仅在作业初始化运行时传递一次，且在作业运行中无法更改参数值从而达到更新的目的，而对于广播状态，当后续要更改作用于主数据流中元素的参数时，只需要向广播流发送新的元素即可
+
+##### 使用条件
+
+* 广播状态仅提供MapState类型的状态结构，且仅能用于特定的算子上
+
+  ```java
+  final MapStateDescriptor<Integer, String> stateDesc = new MapStateDescriptor<>(
+          "broadcast-state", Integer.class, String.class
+  );
+  
+  BroadcastStream<Tuple2<Integer, String>> broadcastStream = ruleStream.broadcast(stateDesc);
+  ```
+
+* 在非广播数据流中调用connect算子连接广播数据流，得到BroadcastConnectedStream，再调用process算子来使用广播状态的数据去处理另一数据流中的数据。如果非广播流是KeyedStream类型的数据流，process算子的参数就是KeyedBroadcastProcessFunction；如果非广播流是DataStream类型的数据流，process算子的参数就是BroadcastProcessFunction
+
+##### 广播函数
+
+无论是BroadcastProcessFunction还是KeyedBroadcastProcessFunction，都需要实现processElement和processBroadcastElement方法
+
+```java
+public abstract void processElement(final IN1 value, final ReadOnlyContext ctx, final Collector<OUT> out) throws Exception;
+public abstract void processBroadcastElement(final IN2 value, final Context ctx, final Collector<OUT> out) throws Exception;
+```
+
+processElement处理非广播流的元素，processBroadcastElement处理广播流的元素。两种方法提供的上下文对象是不同的，ReadOnlyContext上下文对象对获取的广播状态具有**只读**权限，Context上下文对象对获取的广播状态具有**读写**权限
+
+```java
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(2);
+
+        DataStream<Tuple2<Integer, String>> ruleStream = env.addSource(new RichSourceFunction<Tuple2<Integer, String>>() {
+            private final String[] format = new String[]{"yyyy-MM-dd HH:mm", "yyyy-MM-dd HH",
+                    "yyyy-MM-dd", "yyyy-MM", "yyyy"};
+
+            @Override
+            public void run(SourceContext<Tuple2<Integer, String>> ctx) throws Exception {
+                while (true) {
+                    for (String rule : format) {
+                        ctx.collect(new Tuple2<>(1, rule));
+                        Thread.sleep(5000);
+                    }
+                }
+            }
+
+            @Override
+            public void cancel() {
+
+            }
+        });
+
+        DataStream<Date> mainStream = env.addSource(new RichSourceFunction<Date>() {
+
+            @Override
+            public void run(SourceContext<Date> ctx) throws InterruptedException {
+                while (true) {
+                    ctx.collect(new Date());
+                    Thread.sleep(1000);
+                }
+            }
+
+            @Override
+            public void cancel() {
+            }
+        });
+
+        final MapStateDescriptor<Integer, String> stateDesc = new MapStateDescriptor<>(
+                "broadcast-state", Integer.class, String.class
+        );
+
+        BroadcastStream<Tuple2<Integer, String>> broadcastStream = ruleStream.broadcast(stateDesc);
+
+        DataStream<Tuple2<String, String>> result = mainStream.connect(broadcastStream)
+                .process(new BroadcastProcessFunction<Date, Tuple2<Integer, String>, Tuple2<String, String>>() {
+                    private transient MapStateDescriptor<Integer, String> descriptor;
+
+                    @Override
+                    public void open(Configuration parameters) {
+                        descriptor = new MapStateDescriptor<>(
+                                "broadcast-state", Integer.class, String.class
+                        );
+                    }
+
+                    @Override
+                    public void processElement(Date value, ReadOnlyContext ctx,
+                                               Collector<Tuple2<String, String>> out) throws Exception {
+                        String formatRule = "";
+                        for (Map.Entry<Integer, String> entry :
+                                //Map.Entry<K,V>，代表Map集合中的每个元素 https://blog.csdn.net/itaem/article/details/8171663
+                                ctx.getBroadcastState(descriptor).immutableEntries()) {
+                            if (entry.getKey() == 1) {
+                                formatRule = entry.getValue();
+                            }
+                        }
+                        if (StringUtils.isNotBlank(formatRule)) {
+                            SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                            String originalDate = format.format(value);
+                            format = new SimpleDateFormat(formatRule);
+                            String formatDate = format.format(value);
+                            out.collect(Tuple2.of("主数据流元素:" + originalDate, "应用规则后的格式：" + formatDate));
+                        }
+                    }
+
+                    @Override
+                    public void processBroadcastElement(Tuple2<Integer, String> value, Context ctx,
+                                                        Collector<Tuple2<String, String>> out) throws Exception {
+                        BroadcastState<Integer, String> broadcastState = ctx.getBroadcastState(descriptor);
+                        //这里因为元素的key全都相同，所以后面的元素会覆盖前面元素的值
+                        broadcastState.put(value.f0, value.f1);
+                        out.collect(new Tuple2<>("广播状态中新增元素", value.toString()));
+                    }
+                });
+
+        result.print("输出结果");
+
+        env.execute("BroadcastState Template");
+    }
+```
+
 
 
 ### Flink CDC
