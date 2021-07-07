@@ -638,7 +638,59 @@ public DataStreamSource<Long> generateSequence(long from, long to)
 
 ##### 自定义
 
-调用StreamExecutionEnvironment的addSource方法可以添加新的数据源，Flink提供了一批实现好的连接器以支持对应的数据源，同时开发者也可以实现自定义的数据源函数去读取指定系统的数据
+调用StreamExecutionEnvironment的addSource方法可以添加新的数据源，Flink提供了一批实现好的连接器以支持对应的数据源，同时开发者也可以实现自定义的数据源算子去读取指定系统的数据
+
+* SourceFunction接口
+
+  SourceFunction是Flink所有数据源算子实现的基本接口。**SourceFunction算子的并行度只能为1，大于1将会报错**
+
+  ```java
+  void run(SourceContext<T> ctx) throws Exception;
+  void cancel();
+  interface SourceContext<T>{...}
+  ```
+
+  run方法用来生成元素，使用参数SourceContext发送元素。cancel在取消数据源算子时调用。SourceContext接口是数据源算子用来发送元素的接口，可以根据需要选择是否发出水印
+
+  ```java
+      public static void main(String[] args) throws Exception {
+  
+          StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+  
+          env.setParallelism(2);
+          DataStream<Long> inputStream = env.addSource(new SourceFunction<Long>() {
+              private static final long serialVersionUID = 1L;
+  
+              private volatile boolean isRunning = true;
+              private long counter = 0;
+  
+              @Override
+              public void run(SourceContext<Long> ctx) throws Exception {
+                  while (isRunning) {
+                      ctx.collect(counter);
+                      System.out.println("send data :" + counter);
+                      counter++;
+                      long sleepTime = 100;
+                      Thread.sleep(sleepTime);
+                  }
+              }
+  
+              @Override
+              public void cancel() {
+                  isRunning = true;
+              }
+          });
+  
+          DataStream<Long> inputStream1 = inputStream
+                  .map((Long values) ->
+                      values + System.currentTimeMillis());
+          inputStream1.print();
+  
+          env.execute("Intsmaze Custom Source");
+      }
+  ```
+
+  
 
 #### Sink
 
