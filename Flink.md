@@ -690,6 +690,75 @@ public DataStreamSource<Long> generateSequence(long from, long to)
       }
   ```
 
+* ParallelSourceFunction接口
+
+  与SourceFunction接口不同的是，实现ParallelSourceFunction接口的数据源算子具有并行执行特性，运行时将具有并行实例，数量与并行度一致
+
+  该接口仅仅继承了SourceFunction接口，没有添加任何额外的方法，仅利用多态特性作为标记，以标识该数据源算子可以并行执行
+
+  **如果仅仅实现了ParallelSourceFunction接口，会出现重复发送数据的情况，所以实际生产中往往继承RichParallelSourceFunction抽象类来实现并行数据源算子。运行时可以访问上下文信息，防止数据重复发送**
+
+  ```java
+      public static void main(String[] args) throws Exception {
+          StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+  
+          env.setParallelism(2);
+  
+          DataStream<Tuple2<String, Long>> streamSource = env
+                  .addSource(new RichParallelSourceFunction<Tuple2<String, Long>>() {
+                      private long count = 1L;
+  
+                      private boolean isRunning = true;
+  
+                      private String sourceFlag;
+  
+                      @Override
+                      public void run(SourceContext<Tuple2<String, Long>> ctx) throws Exception {
+  
+                          while (isRunning) {
+                              count++;
+                              if ("DB".equals(sourceFlag)) {
+                                  ctx.collect(new Tuple2<>("DB", count));
+                              } else if ("MQ".equals(sourceFlag)) {
+                                  ctx.collect(new Tuple2<>("MQ", count));
+                              }
+                              Thread.sleep(1000);
+  
+                          }
+                      }
+  
+                      @Override
+                      public void cancel() {
+                          isRunning = false;
+                      }
+  
+                      @Override
+                      public void open(Configuration parameters) throws Exception {
+                          int parallelSubtasks = getRuntimeContext().getNumberOfParallelSubtasks();
+                          System.out.println("当前任务的并行度为:" + parallelSubtasks);
+  
+                          int indexOfThisSubtask = getRuntimeContext().getIndexOfThisSubtask();
+                          if (indexOfThisSubtask == 0) {
+                              sourceFlag = "DB";
+                          } else if (indexOfThisSubtask == 1) {
+                              sourceFlag = "MQ";
+                          }
+                          //super.open(parameters);
+  
+                      }
+  
+                      @Override
+                      public void close() throws Exception {
+                          //super.close();
+                      }
+                  });
+  
+          streamSource.print();
+  
+          env.execute("RichParalleSourceTemplate");
+      }
+  ```
+
   
 
 #### Sink
