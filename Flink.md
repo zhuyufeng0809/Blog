@@ -799,10 +799,8 @@ public DataStreamSource<Long> generateSequence(long from, long to)
   
                       @Override
                       public void run(SourceContext<Long> ctx) throws InterruptedException {
-                          final Object lock = ctx.getCheckpointLock();
-  
                           while (true) {
-                              synchronized (lock) {
+                              synchronized (ctx.getCheckpointLock()) {
                                   long offset;
                                   if (checkPointedCount.size() == 0) {
                                       offset = 0L;
@@ -899,6 +897,24 @@ public DataStreamSink<T> writeToSocket(String hostName, int port, SerializationS
 ##### 自定义
 
 调用StreamExecutionEnvironment的addSink方法可以添加新的sink
+
+* SinkFunction接口
+
+  SinkFunction接口是Flink所有sink算子实现的基本接口。每当上游算子向下游sink算子发送一个元素，sink算子的invoke方法就会被调用一次
+
+  ```java
+  void invoke(IN value, Context context) throws Exception
+  ```
+
+  参数value为sink算子接收的元素。参数context为接收元素的上下文信息
+
+* RichSinkFunction抽象类
+
+  如果sink算子需要实现连接数据库等场景，使用SinkFunction接口在invoke方法中创建数据库链接等申请资源操作，是十分浪费资源的（每接收一条，申请一次资源）。这种情况下，可以使用RichSinkFunction抽象类，在提供的open和close方法中申请和释放资源
+
+  ```http
+  https://github.com/intsmaze/flink-book/blob/master/flink-streaming/src/main/java/com/intsmaze/flink/streaming/connector/sink/CustomSinkTemplate.java
+  ```
 
 #### 算子
 
