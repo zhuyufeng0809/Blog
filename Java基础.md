@@ -4,7 +4,9 @@ https://www.cnblogs.com/cjsblog/p/11613708.html
 
 #### 匿名类
 
-Java中可以实现一个类中包含另外一个类，且不需要提供任何的类名直接实例化。匿名类是不能有名字的类，它们不能被引用，只能在创建时用new语句来声明它们。
+Java中可以实现一个类中包含另外一个类，且不需要提供任何的类名直接实例化。匿名类是不能有名字的类，它们不能被引用，只能在创建时用new语句来声明它们。**匿名类可以用代码块实现构造函数的效果**
+
+https://www.cnblogs.com/DreamDrive/p/5430215.html
 
 **匿名类通常继承一个父类或实现一个接口或实现一个抽象类**
 
@@ -486,3 +488,16 @@ https://blog.csdn.net/xxdw1992/article/details/78709281
 https://blog.csdn.net/yongbutingxide/article/details/82669054
 
 https://www.zhihu.com/question/358139143/answer/932727834
+
+#### 代码块
+
+* 普通代码块：类中方法的方法体
+* **构造代码块**：类中**{}**直接括起来的语句，**每次创建对象都会被调用**，**先于构造函数执行**
+* **静态代码块**：类中**static{}**括起来的语句，**只执行一次**，**先于构造代码块块执行**
+* 同步代码块：类中synchronized（）{}括起来的语句，多线程环境下互斥执行
+
+https://www.cnblogs.com/ruowei/p/10852015.html
+
+#### 静态
+
+https://blog.csdn.net/winfredzen/article/details/78458233
