@@ -759,7 +759,81 @@ public DataStreamSource<Long> generateSequence(long from, long to)
       }
   ```
 
+* 开启检查点的数据源算子
+
+  可以在自定义数据源算子时实现CheckpointedFunction接口或者ListCheckpointed接口启动检查点机制。将数据的offset保存在数据源算子的内部状态中，通过定期执行检查点操作进行持久化存储以保证数据源算子在失败恢复后仍具有一致性
+
+  需要注意的是，实现CheckpointedFunction接口或者ListCheckpointed接口的数据源算子**必须确保不会同时执行状态的检查点操作、更新内部状态和发送元素**。为此，FLink提供了检查点锁对象来保证<更新内部状态和发送元素>之前锁定检查点锁
+
+  ```java
+      private abstract static class StateSource<OUT> extends RichParallelSourceFunction<Long>
+              implements ListCheckpointed<Long> {}
   
+      public static void main(String[] args) throws Exception {
+  
+          StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+  
+          env.enableCheckpointing(10000);
+          String url = "file:///Users/zhuyufeng/IdeaProjects/LearnFlink/src/main/resources";
+          StateBackend stateBackend = new RocksDBStateBackend(url, false);
+          env.setStateBackend(stateBackend);
+          env.setRestartStrategy(RestartStrategies.failureRateRestart(
+                  3,
+                  Time.of(5, TimeUnit.MINUTES),
+                  Time.of(10, TimeUnit.SECONDS)
+          ));
+          env.setParallelism(2);
+          DataStream<Long> inputStream = env
+                  .addSource(new StateSource<Long>() {
+                      private List<Long> checkPointedCount = new ArrayList<>();
+  
+                      @Override
+                      public List<Long> snapshotState(long checkpointId, long timestamp) throws Exception {
+                          return checkPointedCount;
+                      }
+  
+                      @Override
+                      public void restoreState(List<Long> state) throws Exception {
+                          checkPointedCount = state;
+                      }
+  
+                      @Override
+                      public void run(SourceContext<Long> ctx) throws InterruptedException {
+                          final Object lock = ctx.getCheckpointLock();
+  
+                          while (true) {
+                              synchronized (lock) {
+                                  long offset;
+                                  if (checkPointedCount.size() == 0) {
+                                      offset = 0L;
+                                  } else {
+                                      offset = checkPointedCount.get(0);
+                                      checkPointedCount.remove(0);
+                                  }
+                                  ctx.collect(offset);
+                                  offset+=1;
+                                  checkPointedCount.add(0, offset);
+  
+                                  if (offset == 10) {
+                                      int i = 1 / 0;
+                                  }
+                              }
+  
+                              Thread.sleep(1000);
+                          }
+                      }
+  
+                      @Override
+                      public void cancel() {
+  
+                      }
+                  }).setParallelism(1);
+  
+          inputStream.print();
+  
+          env.execute("StateSourceTemplate");
+      }
+  ```
 
 #### Sink
 
@@ -2316,7 +2390,7 @@ Flink提供了5种类型不同的托管的Keyed状态结构，状态结构仅用
           env.enableCheckpointing(10000);
           env.setParallelism(1);
           String path = "file:///Users/zhuyufeng/IdeaProjects/LearnFlink/src/main/resources/";
-          FsStateBackend stateBackend = new FsStateBackend(path);
+          StateBackend stateBackend = new FsStateBackend(path);
           env.setStateBackend(stateBackend);
           env.setRestartStrategy(RestartStrategies.failureRateRestart(
                   3,
