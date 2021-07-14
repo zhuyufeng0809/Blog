@@ -916,6 +916,26 @@ public DataStreamSink<T> writeToSocket(String hostName, int port, SerializationS
   https://github.com/intsmaze/flink-book/blob/master/flink-streaming/src/main/java/com/intsmaze/flink/streaming/connector/sink/CustomSinkTemplate.java
   ```
 
+#### Connector
+
+Flink内置了一些基本的数据源算子（文件、socket、集合）和sink算子（文件、输出流、socket），无需添加任何maven依赖。除此之外，FLink还提供了与各种第三方系统（DB、分布式存储、消息队列等）交互的connector，要使用这些connector需要安装额外的第三方组件，在pom.xml文件中添加对应的maven依赖
+
+##### source connector和sink connector的容错保证
+
+##### Flink Kafka Connector
+
+Flink提供了特定的Kafka Connector实现对Kafka服务中指定主题下消息的读取和写入。**同时FLink的Kafka Consumer与Flink的检查点机制进行了集成，以提供Exactly Once语义。为了实现这一语义，FLink并不完全依赖Kafka默认的消费者组的offset跟踪机制，而是在Flink内部跟踪和检查这些offset**
+
+从Flink 1.7开始，提供了一个新的通用Kafka Connector，它不跟踪特定的Kafka主版本，而是在Flink发布时跟踪Kafka的最新版本
+
+**如果Kafka是1.0.0或更新的版本，那么建议使用新的通用Kafka Connector。如果使用Kafka的旧版本（0.11及以前），则应该使用版本对应的Connector**
+
+需要注意的是，**从Flink 1.7开始，通用Kafka Connector被视为Beta状态，并且可能不如0.11版本那么稳定，如果在使用中出现问题，可以尝试使用flink-connector-kafka-0.11_2.11，该版本的Connector与从0.11版本开始的所有版本兼容**
+
+##### Flink Kafka Consumer
+
+##### Flink Kafka Producer
+
 #### 算子
 
 ##### Map
