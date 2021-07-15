@@ -444,8 +444,7 @@ properties.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 33554432);
 
 ##### compression.type(影响吞吐量)
 
-compression.type参数设置producer端是否压缩消息，默认值是none，即不压缩消息。和任何系统相同的是，**Kafka的producer端引入压缩后可以显著地降低网络I/O传输开销从而提升整体吞吐量，但也会增加producer端机器的CPU开销**。另外，**如果broker端的压缩参数设置得与producer不同，broker端在写入消息时也会额外使用CPU资源对消息进行对应的解压
-缩-重压缩操作**
+compression.type参数设置producer端是否压缩消息，默认值是none，即不压缩消息。和任何系统相同的是，**Kafka的producer端引入压缩后可以显著地降低网络I/O传输开销从而提升整体吞吐量，但也会增加producer端机器的CPU开销**。另外，**如果broker端的压缩参数设置得与producer不同，broker端在写入消息时也会额外使用CPU资源对消息进行对应的解压缩-重压缩操作**
 
 目前Kafka支持3种压缩算法:GZIP、Snappy和LZ4。根据实际使用经验来看producer结合LZ4的性能是最好的。由于Kafka源代码中某个关键设置的硬编码使得Snappy的表现远不如LZ4,因此至少对于当前最新版本的Kafka(1.0.0 版本)而言，若要使用压缩，compresson.type最好设置为LZ4
 
@@ -462,7 +461,7 @@ Kafka broker在处理写入请求时可能因为瞬时的故障(比如瞬时的l
 该参数表示进行重试的次数，默认值是0,表示不进行重试。在实际使用过程中，设置重试可以很好地应对那些瞬时错误，因此推荐用户设置该参数为一个大于0的值。只不过在考虑
 retries的设置时，有两点需要着重注意
 
-* 重试可能造成消息的重复发送中比如由于瞬时的网络抖动使得broker端已成功写入消息但没有成功发送响应给producer,因此producer会认为消息发送失败，从而开启重试机制。为了应对这一风险，Kafka 要求用户在consumer端必须执行去重处理。社区已于0.11.0.0版本开始支持“精确-次”处理语义，从设计上避免了类似的问题
+* 重试可能造成消息的重复发送中比如由于瞬时的网络抖动使得broker端已成功写入消息但没有成功发送响应给producer,因此producer会认为消息发送失败，从而开启重试机制。为了应对这一风险，Kafka 要求用户在consumer端必须执行去重处理。社区已于0.11.0.0版本开始支持“精确一次”处理语义，从设计上避免了类似的问题
 
 * 重试可能造成消息的乱序，当前producer会将多个消息发送请求(默认是5个)缓存在内存中，如果由于某种原因发生了消息发送的重试，就可能造成消息流的乱序。为了避免乱序发生，Java版本producer 提供了max.n.flight.requets.per.connection参数。一旦用户将此参数设置成1，producer将确保某一时刻只能发送一个请求
 
